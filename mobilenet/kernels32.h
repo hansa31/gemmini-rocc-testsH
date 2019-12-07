@@ -4,7 +4,7 @@
 #define LEN(arr) ((int) (sizeof (arr) / sizeof (arr[0])))
 
 
-#include "include/systolic.h"
+#include "include/gemmini.h"
 
 
 //layer number:2
