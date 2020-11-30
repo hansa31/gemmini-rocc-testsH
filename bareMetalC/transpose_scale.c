@@ -12,24 +12,7 @@
 
 #define KDIM 6
 
-typedef union {
-  float f;
-  uint32_t bits;
-} float_cast;
-
-#ifdef ELEM_T_IS_LOWPREC_FLOAT
-#define toelem( a, b ) \
-{ \
-    float_cast tmp = { (a) }; \
-    (b) = (elem_t)ROUNDING_RIGHT_SHIFT(tmp.bits, (23 - (ELEM_T_SIG_BITS - 1))); \
-}
-#else
-#define toelem( a, b )  (b) = (a)
-#endif
-
 int main() {
-#ifdef ELEM_T_IS_LOWPREC_FLOAT
-
 #ifndef BAREMETAL
     if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
       perror("mlockall failed");
@@ -43,48 +26,31 @@ int main() {
   printf("Initialize our input and output matrices in main memory\n");
   elem_t InA[KDIM][DIM];
   elem_t InB[KDIM][DIM];
-  acc_t RefInA[KDIM][DIM];
-  acc_t RefInB[KDIM][DIM];
-  acc_t Bias[DIM][DIM];
   elem_t Out[DIM][DIM];
-  acc_t OutGoldAcc[DIM][DIM];
   elem_t OutGold[DIM][DIM];
 
-  scale_acc_t A_scale_factor = (rand() % 2) + 1;
+  // elem_t A_scale_factor = (rand() % 2) + 1;
+  const elem_t A_scale_factor = 0;
 
   for (size_t i = 0; i < KDIM; i++)
     for (size_t j = 0; j < DIM; j++) {
-      RefInA[i][j] = rand() % 10;
-      RefInB[i][j] = rand() % 10;
-      toelem(RefInA[i][j], InA[i][j]);
-      toelem(RefInB[i][j], InB[i][j]);
+      InA[i][j] = rand() % 5;
+      InB[i][j] = rand() % 5;
     }
   
-  for (size_t i = 0; i < DIM; i++)
-    for (size_t j = 0; j < DIM; j++) {
-      Bias[i][j] = rand() % 10;
-    }
-
   for (size_t i = 0; i < DIM; i++) {
     for (size_t j = 0; j < DIM; j++) {
-      OutGoldAcc[i][j] = Bias[i][j]; 
+      OutGold[i][j] = 0; 
       for (size_t k = 0; k < KDIM; k++) {
-        OutGoldAcc[i][j] += A_scale_factor*RefInA[k][i]*RefInB[k][j];
-      }
-      toelem(OutGoldAcc[i][j], OutGold[i][j]);
-    }
-  }
+        // OutGold[i][j] += A_scale_factor*InA[k][i]*InB[k][j];
+        OutGold[i][j] += InA[k][i]*InB[k][j];
+    }}}
 
   printf("Calculate the scratchpad addresses of all our matrices\n");
   printf("  Note: The scratchpad is \"row-addressed\", where each address contains one matrix row\n");
   size_t InA_sp_addr = 0;
+  size_t Out_sp_addr = 2*KDIM;
   size_t InB_sp_addr = 4*KDIM;
-  const uint32_t Bias_sp_addr = 1 << (ADDR_LEN-1);
-  const uint32_t Out_sp_addr = 3 << (ADDR_LEN-2);
-
-  printf("Move \"Bias\" matrix from main memory into Gemmini's accumulators\n");
-  gemmini_config_ld(DIM * sizeof(acc_t));
-  gemmini_mvin(Bias, Bias_sp_addr);
 
   for (size_t K0 = 0; K0 < KDIM; K0+=DIM) {
 
@@ -97,9 +63,8 @@ int main() {
     gemmini_config_ld(DIM * sizeof(elem_t));
     gemmini_mvin(InB+K0, InB_sp_addr+K0);
   
-    printf("Multiply \"InA\" transposed matrix with \"InB\" matrix\n");
+    printf("Multiply \"InA\" transposed matrix with \"InB\" matrix with a bias of 0\n");
     gemmini_extended_config_ex(OUTPUT_STATIONARY, 0, 0, 0, 0, 1, true, false)
-    // gemmini_extended_config_ex(OUTPUT_STATIONARY, 0, 0, 0, 0, 1, false, false)
     
     gemmini_preload_zeros(K0 + DIM >= KDIM ? Out_sp_addr : GARBAGE_ADDR);
     if (K0 == 0) { // First iteration
@@ -122,16 +87,8 @@ int main() {
 
   if (!is_equal(Out, OutGold)) {
     printf("Ouput and Gold matrices are different!\n");
-    // printf("\"InA\" matrix:\n");
-    // printMatrix(InA);
-    // printf("\"InB\" matrix:\n");
-    // printMatrix(InB);
-    // printf("\"Bias\" matrix:\n");
-    // printMatrix(Bias);
     printf("\"Out\" matrix:\n");
     printMatrix(Out);
-    printf("\"OutGoldAcc\" matrix:\n");
-    printMatrixAcc(OutGoldAcc);
     printf("\"OutGold\" matrix:\n");
     printMatrix(OutGold);
     printf("\n");
@@ -140,9 +97,6 @@ int main() {
   }
 
   printf("Output and Gold matrices are identical, as expected\n");
-
-#endif // #ifdef ELEM_T_IS_LOWPREC_FLOAT
-
   exit(0);
 }
 
