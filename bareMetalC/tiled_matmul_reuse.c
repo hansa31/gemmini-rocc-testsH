@@ -27,9 +27,9 @@ typedef elem_t ACC_T;
 #define MAT_DIM_K 412
 #define MAT_DIM_J 300
 #else
-#define MAT_DIM_I 64
-#define MAT_DIM_K 64
-#define MAT_DIM_J 48
+#define MAT_DIM_I 16
+#define MAT_DIM_K 16
+#define MAT_DIM_J 20
 #endif
 
 void print_tile(elem_t* in, int tile_dim) {
@@ -54,7 +54,7 @@ void full_matmul(elem_t A[MAT_DIM_I][MAT_DIM_K], elem_t B[MAT_DIM_J][MAT_DIM_K],
 void full_printMatrix(elem_t m[MAT_DIM_I][MAT_DIM_J]) {
   for (size_t i = 0; i < MAT_DIM_I; ++i) {
     for (size_t j = 0; j < MAT_DIM_J; ++j)
-      printf("%d ", m[i][j]);
+      printf("%d.%d ", (int)m[i][j], ((int)(m[i][j]*100))%100);
     printf("\n");
   }
 }
@@ -62,8 +62,10 @@ void full_printMatrix(elem_t m[MAT_DIM_I][MAT_DIM_J]) {
 int full_is_equal(elem_t x[MAT_DIM_I][MAT_DIM_J], elem_t y[MAT_DIM_I][MAT_DIM_J]) {
   for (size_t i = 0; i < MAT_DIM_I; ++i)
     for (size_t j = 0; j < MAT_DIM_J; ++j)
-      if (x[i][j] != y[i][j])
-        return 0;
+      if ((int)(x[i][j]*100) != (int)(y[i][j]*100)){
+			printf("i: %d, j: %d, %d, %d \n", i, j, (int)(x[i][j]), (int)(y[i][j]));
+			return 0;
+		}
   return 1;
 }
 
@@ -95,9 +97,11 @@ int main() {
 
     static elem_t full_A[MAT_DIM_I][MAT_DIM_K] row_align(1);
     static elem_t full_B[MAT_DIM_J][MAT_DIM_K] row_align(1);
+	 static elem_t temp[MAT_DIM_J][MAT_DIM_K] row_align(1);
     static elem_t full_C[MAT_DIM_I][MAT_DIM_J] row_align(1);
     static ACC_T full_D[MAT_DIM_I][MAT_DIM_J] row_align_acc(1);
-
+    static elem_t full_C_2[MAT_DIM_I][MAT_DIM_J] row_align(1);
+ 
     static full_t gold_full[MAT_DIM_I][MAT_DIM_J];
     static elem_t gold[MAT_DIM_I][MAT_DIM_J];
 
@@ -135,7 +139,7 @@ int main() {
     unsigned long start = read_cycles();
 
     tiled_matmul_auto(MAT_DIM_I, MAT_DIM_J, MAT_DIM_K,
-            (elem_t*)full_A, (elem_t*)full_B, NO_BIAS ? NULL : &full_D[0][0], (elem_t*)full_C,
+            (elem_t*)full_A, (elem_t*)full_B, NO_BIAS ? NULL : &full_D[0][0], (elem_t*)temp,
             MAT_DIM_K, MAT_DIM_K, MAT_DIM_J, MAT_DIM_J,
             MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
             NO_ACTIVATION, ACC_SCALE_IDENTITY, 0, false,
@@ -145,16 +149,42 @@ int main() {
     unsigned long end = read_cycles();
     printf("Cycles taken: %u\n", end-start);
 
+	 tiled_matmul_auto(MAT_DIM_I, MAT_DIM_J, MAT_DIM_K,
+            (elem_t*)full_A, NULL, NO_BIAS ? NULL : &full_D[0][0], (elem_t*)full_C,
+            MAT_DIM_K, MAT_DIM_K, MAT_DIM_J, MAT_DIM_J,
+            MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
+            NO_ACTIVATION, ACC_SCALE_IDENTITY, 0, false,
+            false, true,
+            WS);
+
+	 printf("Starting gemmini matmul w/o mvin B\n");
+    unsigned long start2 = read_cycles();
+
+    tiled_matmul_auto(MAT_DIM_I, MAT_DIM_J, MAT_DIM_K,
+            (elem_t*)full_A, (elem_t*) full_B, NO_BIAS ? NULL : &full_D[0][0], (elem_t*)full_C_2,
+            MAT_DIM_K, MAT_DIM_K, MAT_DIM_J, MAT_DIM_J,
+            MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
+            NO_ACTIVATION, ACC_SCALE_IDENTITY, 0, false,
+            false, true,
+            WS);
+
+    unsigned long end2 = read_cycles();
+    printf("Cycles taken: %u\n", end2-start2);
+
+
 #if CHECK_RESULT == 1
-    if (!full_is_equal(full_C, gold)) {
+    if (!full_is_equal(full_C_2, gold) || !full_is_equal(full_C, gold)) {
       printf("C:\n");
-      full_printMatrix(full_C);
+      if(!full_is_equal(full_C, gold)) full_printMatrix(full_C);
+		printf("C2: \n");
+		if(!full_is_equal(full_C_2, gold)) full_printMatrix(full_C_2);
       printf("Gold:\n");
       full_printMatrix(gold);
       printf("\n");
 
       exit(1);
     }
+	 printf("correct \n");
 #endif
 
   exit(0);
