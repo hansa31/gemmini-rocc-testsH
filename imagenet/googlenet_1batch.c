@@ -2316,7 +2316,7 @@ int main (int argc, char * argv[]) {
       printf("Other cycles: %llu (%d%%)\n", other_cycles, (other_cycles * 100) / total_cycles);
     }
 
-    int correct[] = {375, 770, 249, 891};
+    int correct[] = {375};
     for (int i = 0; i < fc_69_params.batch_size; i++) {
         if (preds[i] != correct[i] && fc_69_out[i][preds[i]] != fc_69_out[i][correct[i]]) {
             printf("Prediction %d is incorrect!\nFAIL\n", i+1);
