@@ -14,90 +14,57 @@
 #define IN_ROW_DIM 224
 #define IN_COL_DIM 224
 #define IN_CHANNELS 3
-#define OUT_CHANNELS 17
+#define OUT_CHANNELS 32
 #define KERNEL_DIM 3
-#define PADDING -1
-#define STRIDE 1
-#define INPUT_DILATION 2
+#define PADDING 1
+#define STRIDE 2
 
 #else
 
-#ifdef FAST
-
-#define IN_ROW_DIM 9
-#define IN_COL_DIM 9
-#define IN_CHANNELS 5
-#define OUT_CHANNELS 7
-
-#else
-
-#define IN_ROW_DIM 17
-#define IN_COL_DIM 17
-#define IN_CHANNELS 18
-#define OUT_CHANNELS 19
-
-#endif
-
+#define IN_ROW_DIM 14
+#define IN_COL_DIM 14
+#define IN_CHANNELS 16
+#define OUT_CHANNELS 18
 #define BATCH_SIZE 2
 #define KERNEL_DIM 3
-#define PADDING -1
-#define STRIDE 1
-#define INPUT_DILATION 2
+#define PADDING 1
+#define STRIDE 2
 
 #endif
 
 #define NO_BIAS false
 
-#define IN_ROW_DIM_DILATED (IN_ROW_DIM + (INPUT_DILATION - 1)*(IN_ROW_DIM - 1))
-#define IN_COL_DIM_DILATED (IN_COL_DIM + (INPUT_DILATION - 1)*(IN_COL_DIM - 1))
-#define OUT_ROW_DIM ((IN_ROW_DIM_DILATED + 2*PADDING - KERNEL_DIM) / STRIDE + 1)
-#define OUT_COL_DIM ((IN_COL_DIM_DILATED + 2*PADDING - KERNEL_DIM) / STRIDE + 1)
+#define OUT_ROW_DIM ((IN_ROW_DIM + 2*PADDING - KERNEL_DIM) / STRIDE + 1)
+#define OUT_COL_DIM ((IN_COL_DIM + 2*PADDING - KERNEL_DIM) / STRIDE + 1)
 #define PATCH_SIZE (KERNEL_DIM * KERNEL_DIM * IN_CHANNELS)
 #define N_PATCHES (BATCH_SIZE * OUT_ROW_DIM * OUT_COL_DIM)
+
+#define IN_STRIDE (IN_CHANNELS + 6)
+#define WEIGHT_STRIDE (OUT_CHANNELS + 14)
+#define OUT_STRIDE (OUT_CHANNELS + 2)
 
 void conv(int batch_size, int in_channels,
         int in_row_dim, int in_col_dim,
         int out_channels, int kernel_dim,
         int out_row_dim, int out_col_dim,
-        int stride, int input_dilation, int padding,
-        elem_t input[batch_size][in_row_dim][in_col_dim][in_channels],
+        int stride, int padding,
+        int in_stride, int out_stride,
+        elem_t input[batch_size][in_row_dim][in_col_dim][in_stride],
         elem_t weights[out_channels][kernel_dim][kernel_dim][in_channels],
         acc_t bias[out_channels],
-        elem_t output[batch_size][out_row_dim][out_col_dim][out_channels]) {
-
-    const size_t in_row_dim_dilated = in_row_dim + (input_dilation - 1)*(in_row_dim - 1);
-    const size_t in_col_dim_dilated = in_col_dim + (input_dilation - 1)*(in_col_dim - 1);
-    assert(in_row_dim_dilated == IN_ROW_DIM_DILATED);
-    assert(in_col_dim_dilated == IN_COL_DIM_DILATED);
-    static elem_t dilated[BATCH_SIZE][IN_ROW_DIM_DILATED][IN_COL_DIM_DILATED][IN_CHANNELS];
+        elem_t output[batch_size][out_row_dim][out_col_dim][out_stride]) {
 
 #ifdef GEMMINI_ASSERTIONS
-    if (out_row_dim != (in_row_dim_dilated + 2*padding - kernel_dim) / stride + 1) {
+    if (out_row_dim != (in_row_dim + 2 * padding - kernel_dim) / stride + 1) {
         printf("conv out_row_dim is not correct\n");
-        printf("out_row_dim\n");
         exit(1);
     }
-    if (out_col_dim != (in_col_dim_dilated + 2*padding - kernel_dim) / stride + 1) {
+
+    if (out_col_dim != (in_col_dim + 2 * padding - kernel_dim) / stride + 1) {
         printf("conv out_col_dim is not correct\n");
-        printf("out_col_dim\n");
         exit(1);
     }
 #endif
-
-    for (int b = 0; b < batch_size; b++)
-        for (int irow = 0; irow < in_row_dim_dilated; irow++)
-            for (int icol = 0; icol < in_col_dim_dilated; icol++)
-                for (int ich = 0; ich < in_channels; ich++)
-                    dilated[b][irow][icol][ich] = 0;
-
-    size_t idx = 0;
-    for (int b = 0; b < batch_size; b++)
-        for (int irow = 0; irow < in_row_dim_dilated; irow += input_dilation)
-            for (int icol = 0; icol < in_col_dim_dilated; icol += input_dilation)
-                for (int ich = 0; ich < in_channels; ich++) {
-                    dilated[b][irow][icol][ich] = *((elem_t*)input + idx);
-                    idx++;
-                }
 
     for (int b = 0; b < batch_size; b++) {
         for (int orow = 0; orow < out_row_dim; orow++) {
@@ -111,9 +78,9 @@ void conv(int batch_size, int in_channels,
                                 int irow = orow * stride + krow - padding;
                                 int icol = ocol * stride + kcol - padding;
 
-                                elem_t pixel = irow < 0 || irow >= in_row_dim_dilated ||
-                                    icol < 0 || icol >= in_col_dim_dilated ?
-                                    0 : dilated[b][irow][icol][kch];
+                                elem_t pixel = irow < 0 || irow >= in_row_dim ||
+                                    icol < 0 || icol >= in_col_dim ?
+                                    0 : input[b][irow][icol][kch];
 
                                 result +=
                                     weights[och][krow][kcol][kch] *
@@ -133,9 +100,9 @@ void conv(int batch_size, int in_channels,
 }
 
 void flatten_weights(int out_channels, int kernel_dim, int in_channels,
-        int patch_size,
+        int patch_size, int out_stride,
         elem_t weights[out_channels][kernel_dim][kernel_dim][in_channels],
-        elem_t weights_mat[patch_size][out_channels]) {
+        elem_t weights_mat[patch_size][out_stride]) {
 
     assert(patch_size == kernel_dim * kernel_dim * in_channels);
 
@@ -162,15 +129,13 @@ bool vec_is_equal(elem_t * a, elem_t * b, int len) {
     return true;
 }
 
-void init_random(elem_t * buf, int len) {
+void init_random(elem_t * buf, int row, int col, int stride){
     elem_t i = 0;
-    for (elem_t * ptr = buf; ptr < buf + len; ptr++) {
-        // *ptr = (rand() % 32) - 16;
-#ifdef FAST
-      *ptr = 1;
-#else
-      *ptr = (rand() % 5) - 2;
-#endif
+    for(int r = 0; r < row; r++){
+        for(int c = 0; c < col; c++){
+            elem_t * ptr = buf + row * stride + col;
+            *ptr = (rand() % 5) - 2;
+        }
     }
 }
 
@@ -178,11 +143,7 @@ void init_random_acc(acc_t * buf, int len) {
     elem_t i = 0;
     for (acc_t * ptr = buf; ptr < buf + len; ptr++) {
         // *ptr = (rand() % 32) - 16;
-#ifdef FAST
-      *ptr = 1;
-#else
       *ptr = (rand() % 5) - 2;
-#endif
     }
 }
 
@@ -204,20 +165,19 @@ int main() {
 
     // assert((in_dim + 2*padding - kernel_dim) % stride == 0);
 
-    printf("Dilated input dimensions: %u by %u\n", IN_ROW_DIM_DILATED, IN_COL_DIM_DILATED);
-    printf("Input dimensions: %u by %u\n", IN_ROW_DIM, IN_COL_DIM);
-    printf("Output dimensions: %u by %u\n\n", OUT_ROW_DIM, OUT_COL_DIM);
+    printf("Input dimensions (rows by columns): %u by %u\n", IN_ROW_DIM, IN_COL_DIM);
+    printf("Output dimensions (rows by columns): %u by %u\n\n", OUT_ROW_DIM, OUT_COL_DIM);
 
-    static elem_t input[BATCH_SIZE][IN_ROW_DIM][IN_COL_DIM][IN_CHANNELS];
+    static elem_t input[BATCH_SIZE][IN_ROW_DIM][IN_COL_DIM][IN_STRIDE];
     static elem_t weights[OUT_CHANNELS][KERNEL_DIM][KERNEL_DIM][IN_CHANNELS];
     static acc_t bias[OUT_CHANNELS];
-    static elem_t output[BATCH_SIZE][OUT_ROW_DIM][OUT_COL_DIM][OUT_CHANNELS];
+    static elem_t output[BATCH_SIZE][OUT_ROW_DIM][OUT_COL_DIM][OUT_STRIDE];
 
     printf("Randomize inputs...\n");
-    init_random(&input[0][0][0][0], sizeof(input) / sizeof(elem_t));
+    init_random(&input[0][0][0][0], BATCH_SIZE*IN_ROW_DIM*IN_COL_DIM, IN_CHANNELS, IN_STRIDE);
 
     printf("Randomize weights...\n");
-    init_random(&weights[0][0][0][0], sizeof(weights) / sizeof(elem_t));
+    init_random(&weights[0][0][0][0], OUT_CHANNELS*KERNEL_DIM*KERNEL_DIM,IN_CHANNELS, IN_CHANNELS);
 
     printf("Randomize bias...\n");
     if (NO_BIAS)
@@ -227,35 +187,35 @@ int main() {
 
     printf("CPU conv...\n");
     uint64_t start_cpu = read_cycles();
-#ifndef FAST
     conv(BATCH_SIZE, IN_CHANNELS,
             IN_ROW_DIM, IN_COL_DIM,
             OUT_CHANNELS, KERNEL_DIM,
             OUT_ROW_DIM, OUT_COL_DIM,
-            STRIDE, INPUT_DILATION, PADDING,
+            STRIDE, PADDING,
+            IN_STRIDE, OUT_STRIDE,
             input,
             weights,
             bias,
             output);
-#endif
     uint64_t end_cpu = read_cycles();
     printf("CPU conv took %llu cycles\n", end_cpu - start_cpu);
 
-    static elem_t weights_mat[PATCH_SIZE][OUT_CHANNELS];
-    static elem_t output_mat[N_PATCHES][OUT_CHANNELS];
+    static elem_t weights_mat[PATCH_SIZE][OUT_STRIDE] = {0};
+    static elem_t output_mat[N_PATCHES][OUT_STRIDE] = {0};
 
     printf("Flatten weights...\n");
     flatten_weights(OUT_CHANNELS, KERNEL_DIM, IN_CHANNELS,
-            PATCH_SIZE,
+            PATCH_SIZE, OUT_STRIDE,
             weights,
             weights_mat);
 
     printf("Gemmini conv...\n");
     uint64_t start_gemmini = read_cycles();
-    tiled_conv_auto(
+    tiled_conv_stride_auto(
         BATCH_SIZE, IN_ROW_DIM, IN_COL_DIM, IN_CHANNELS,
         OUT_CHANNELS, OUT_ROW_DIM, OUT_COL_DIM,
-        STRIDE, INPUT_DILATION, 1, PADDING, KERNEL_DIM,
+        STRIDE, 1, 1, PADDING, KERNEL_DIM,
+        IN_STRIDE, WEIGHT_STRIDE, OUT_STRIDE,
         false, false, false, false, false,
 
         (elem_t*)input,
@@ -265,28 +225,13 @@ int main() {
 
         NO_ACTIVATION, ACC_SCALE_IDENTITY, 0, 0, 0,
 
-        // CPU);
         WS);
     uint64_t end_gemmini = read_cycles();
     printf("Gemmini conv took %llu cycles\n", end_gemmini - start_gemmini);
 
     assert(sizeof(output_mat) == sizeof(output));
 
-#ifdef FAST
-    bool success = true;
-    for (int orow = 0; orow < BATCH_SIZE * OUT_ROW_DIM * OUT_COL_DIM; orow++) {
-      for (int ocol = 0; ocol < OUT_CHANNELS; ocol++) {
-        elem_t v = output_mat[orow][ocol];
-        if (v != 6 && v != 11 && v != 21) {
-          success = false;
-          break;
-        }
-      }
-    }
-#else
     bool success = vec_is_equal(&output[0][0][0][0], &output_mat[0][0], sizeof(output) / sizeof(elem_t));
-#endif
-
     if (!success) {
         // return 1;
 
@@ -317,7 +262,7 @@ int main() {
         printf("weights_mat:\n");
         for (int wrow = 0; wrow < KERNEL_DIM * KERNEL_DIM * IN_CHANNELS; wrow++) {
             printf("[");
-            for (int wcol = 0; wcol < OUT_CHANNELS; wcol++) {
+            for (int wcol = 0; wcol < OUT_STRIDE; wcol++) {
                 printf("%d,", weights_mat[wrow][wcol]);
             }
             printf("\b],\n");
@@ -331,7 +276,7 @@ int main() {
                 printf("[");
                 for (int icol = 0; icol < IN_COL_DIM; icol++) {
                     printf("[");
-                    for (int ich = 0; ich < IN_CHANNELS; ich++) {
+                    for (int ich = 0; ich < IN_STRIDE; ich++) {
                         printf("%d,", input[batch][irow][icol][ich]);
                     }
                     printf("\b],");
@@ -349,7 +294,7 @@ int main() {
                 printf("[");
                 for (int ocol = 0; ocol < OUT_COL_DIM; ocol++) {
                     printf("[");
-                    for (int och = 0; och < OUT_CHANNELS; och++) {
+                    for (int och = 0; och < OUT_STRIDE; och++) {
                         printf("%d,", output[batch][orow][ocol][och]);
                     }
                     printf("\b],");
@@ -363,7 +308,7 @@ int main() {
         printf("output_mat:\n");
         for (int orow = 0; orow < BATCH_SIZE * OUT_ROW_DIM * OUT_COL_DIM; orow++) {
             printf("[");
-            for (int ocol = 0; ocol < OUT_CHANNELS; ocol++) {
+            for (int ocol = 0; ocol < OUT_STRIDE; ocol++) {
                 printf("%d,", output_mat[orow][ocol]);
             }
             printf("\b],\n");
