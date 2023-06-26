@@ -8,100 +8,39 @@
 #endif
 #include "include/gemmini_testutils.h"
 
-#ifndef BAREMETAL
-
-#define BATCH_SIZE 4
-#define IN_ROW_DIM 224
-#define IN_COL_DIM 224
-#define IN_CHANNELS 3
-#define OUT_CHANNELS 17
-#define KERNEL_DIM 3
-#define PADDING -1
-#define STRIDE 1
-#define INPUT_DILATION 2
-
-#else
-
-#ifdef FAST
-
-#define IN_ROW_DIM 9
-#define IN_COL_DIM 9
-#define IN_CHANNELS 5
-#define OUT_CHANNELS 7
-
-#else
-
-#define IN_ROW_DIM 17
-#define IN_COL_DIM 17
-#define IN_CHANNELS 18
-#define OUT_CHANNELS 19
-
-#endif
-
 #define BATCH_SIZE 2
-#define KERNEL_DIM 3
-#define PADDING -1
-#define STRIDE 1
-#define INPUT_DILATION 2
-
-#endif
+#define IN_DIM %IN_DIM%
+#define IN_CHANNELS %IN_CHANNELS%
+#define OUT_CHANNELS %OUT_CHANNELS%
+#define KERNEL_DIM %KERNEL_DIM%
+#define PADDING %PADDING%
+#define STRIDE %STRIDE%
 
 #define NO_BIAS false
 
-#define IN_ROW_DIM_DILATED (IN_ROW_DIM + (INPUT_DILATION - 1)*(IN_ROW_DIM - 1))
-#define IN_COL_DIM_DILATED (IN_COL_DIM + (INPUT_DILATION - 1)*(IN_COL_DIM - 1))
-#define OUT_ROW_DIM ((IN_ROW_DIM_DILATED + 2*PADDING - KERNEL_DIM) / STRIDE + 1)
-#define OUT_COL_DIM ((IN_COL_DIM_DILATED + 2*PADDING - KERNEL_DIM) / STRIDE + 1)
+#define OUT_DIM ((IN_DIM + 2*PADDING - KERNEL_DIM) / STRIDE + 1)
 #define PATCH_SIZE (KERNEL_DIM * KERNEL_DIM * IN_CHANNELS)
-#define N_PATCHES (BATCH_SIZE * OUT_ROW_DIM * OUT_COL_DIM)
+#define N_PATCHES (BATCH_SIZE * OUT_DIM * OUT_DIM)
 
-void conv(int batch_size, int in_channels,
-        int in_row_dim, int in_col_dim,
+void conv(int batch_size, int in_channels, int in_dim,
         int out_channels, int kernel_dim,
-        int out_row_dim, int out_col_dim,
-        int stride, int input_dilation, int padding,
-        elem_t input[batch_size][in_row_dim][in_col_dim][in_channels],
+        int out_dim,
+        int stride, int padding,
+        elem_t input[batch_size][in_dim][in_dim][in_channels],
         elem_t weights[out_channels][kernel_dim][kernel_dim][in_channels],
         acc_t bias[out_channels],
-        elem_t output[batch_size][out_row_dim][out_col_dim][out_channels]) {
-
-    const size_t in_row_dim_dilated = in_row_dim + (input_dilation - 1)*(in_row_dim - 1);
-    const size_t in_col_dim_dilated = in_col_dim + (input_dilation - 1)*(in_col_dim - 1);
-    assert(in_row_dim_dilated == IN_ROW_DIM_DILATED);
-    assert(in_col_dim_dilated == IN_COL_DIM_DILATED);
-    static elem_t dilated[BATCH_SIZE][IN_ROW_DIM_DILATED][IN_COL_DIM_DILATED][IN_CHANNELS];
+        elem_t output[batch_size][out_dim][out_dim][out_channels]) {
 
 #ifdef GEMMINI_ASSERTIONS
-    if (out_row_dim != (in_row_dim_dilated + 2*padding - kernel_dim) / stride + 1) {
-        printf("conv out_row_dim is not correct\n");
-        printf("out_row_dim\n");
-        exit(1);
-    }
-    if (out_col_dim != (in_col_dim_dilated + 2*padding - kernel_dim) / stride + 1) {
-        printf("conv out_col_dim is not correct\n");
-        printf("out_col_dim\n");
+    if (out_dim != (in_dim + 2*padding - kernel_dim) / stride + 1) {
+        printf("conv out_dim is not correct\n");
         exit(1);
     }
 #endif
 
-    for (int b = 0; b < batch_size; b++)
-        for (int irow = 0; irow < in_row_dim_dilated; irow++)
-            for (int icol = 0; icol < in_col_dim_dilated; icol++)
-                for (int ich = 0; ich < in_channels; ich++)
-                    dilated[b][irow][icol][ich] = 0;
-
-    size_t idx = 0;
-    for (int b = 0; b < batch_size; b++)
-        for (int irow = 0; irow < in_row_dim_dilated; irow += input_dilation)
-            for (int icol = 0; icol < in_col_dim_dilated; icol += input_dilation)
-                for (int ich = 0; ich < in_channels; ich++) {
-                    dilated[b][irow][icol][ich] = *((elem_t*)input + idx);
-                    idx++;
-                }
-
     for (int b = 0; b < batch_size; b++) {
-        for (int orow = 0; orow < out_row_dim; orow++) {
-            for (int ocol = 0; ocol < out_col_dim; ocol++) {
+        for (int orow = 0; orow < out_dim; orow++) {
+            for (int ocol = 0; ocol < out_dim; ocol++) {
                 for (int och = 0; och < out_channels; och++) {
                     acc_t result = bias[och];
 
@@ -111,9 +50,9 @@ void conv(int batch_size, int in_channels,
                                 int irow = orow * stride + krow - padding;
                                 int icol = ocol * stride + kcol - padding;
 
-                                elem_t pixel = irow < 0 || irow >= in_row_dim_dilated ||
-                                    icol < 0 || icol >= in_col_dim_dilated ?
-                                    0 : dilated[b][irow][icol][kch];
+                                elem_t pixel = irow < 0 || irow >= in_dim ||
+                                    icol < 0 || icol >= in_dim ?
+                                    0 : input[b][irow][icol][kch];
 
                                 result +=
                                     weights[och][krow][kcol][kch] *
@@ -199,44 +138,51 @@ int main() {
       exit(1);
     }
 #endif
+    printf("Input dimension: %u\n", IN_DIM); 
+    printf("Input channels: %u\n", IN_CHANNELS); 
+    printf("Output channels: %u\n", OUT_CHANNELS); 
+    printf("Kernel dimensions: %u\n", KERNEL_DIM); 
+    printf("Stride: %u\n", STRIDE);
+    printf("Padding: %u\n", PADDING);
+    printf("Batch size: %u\n\n", BATCH_SIZE); 
 
     gemmini_flush(0);
 
     // assert((in_dim + 2*padding - kernel_dim) % stride == 0);
 
-    printf("Dilated input dimensions: %u by %u\n", IN_ROW_DIM_DILATED, IN_COL_DIM_DILATED);
-    printf("Input dimensions: %u by %u\n", IN_ROW_DIM, IN_COL_DIM);
-    printf("Output dimensions: %u by %u\n\n", OUT_ROW_DIM, OUT_COL_DIM);
+    printf("Output dimension: %u\n\n", OUT_DIM);
 
-    static elem_t input[BATCH_SIZE][IN_ROW_DIM][IN_COL_DIM][IN_CHANNELS];
+    static elem_t input[BATCH_SIZE][IN_DIM][IN_DIM][IN_CHANNELS];
     static elem_t weights[OUT_CHANNELS][KERNEL_DIM][KERNEL_DIM][IN_CHANNELS];
     static acc_t bias[OUT_CHANNELS];
-    static elem_t output[BATCH_SIZE][OUT_ROW_DIM][OUT_COL_DIM][OUT_CHANNELS];
+    static elem_t output[BATCH_SIZE][OUT_DIM][OUT_DIM][OUT_CHANNELS];
 
     printf("Randomize inputs...\n");
-    init_random(&input[0][0][0][0], sizeof(input) / sizeof(elem_t));
+    //init_random(&input[0][0][0][0], sizeof(input) / sizeof(elem_t));
 
     printf("Randomize weights...\n");
-    init_random(&weights[0][0][0][0], sizeof(weights) / sizeof(elem_t));
+    //init_random(&weights[0][0][0][0], sizeof(weights) / sizeof(elem_t));
 
+    /*
     printf("Randomize bias...\n");
     if (NO_BIAS)
         init_zeros_acc(&bias[0], sizeof(bias) / sizeof(acc_t));
     else
         init_random_acc(&bias[0], sizeof(bias) / sizeof(acc_t));
+    */
 
     printf("CPU conv...\n");
     uint64_t start_cpu = read_cycles();
 #ifndef FAST
-    conv(BATCH_SIZE, IN_CHANNELS,
-            IN_ROW_DIM, IN_COL_DIM,
+    /*conv(BATCH_SIZE, IN_CHANNELS, IN_DIM,
             OUT_CHANNELS, KERNEL_DIM,
-            OUT_ROW_DIM, OUT_COL_DIM,
-            STRIDE, INPUT_DILATION, PADDING,
+            OUT_DIM,
+            STRIDE, PADDING,
             input,
             weights,
             bias,
             output);
+	    */
 #endif
     uint64_t end_cpu = read_cycles();
     printf("CPU conv took %llu cycles\n", end_cpu - start_cpu);
@@ -245,17 +191,17 @@ int main() {
     static elem_t output_mat[N_PATCHES][OUT_CHANNELS];
 
     printf("Flatten weights...\n");
-    flatten_weights(OUT_CHANNELS, KERNEL_DIM, IN_CHANNELS,
+    /*flatten_weights(OUT_CHANNELS, KERNEL_DIM, IN_CHANNELS,
             PATCH_SIZE,
             weights,
             weights_mat);
-
+	*/
     printf("Gemmini conv...\n");
     uint64_t start_gemmini = read_cycles();
     tiled_conv_auto(
-        BATCH_SIZE, IN_ROW_DIM, IN_COL_DIM, IN_CHANNELS,
-        OUT_CHANNELS, OUT_ROW_DIM, OUT_COL_DIM,
-        STRIDE, INPUT_DILATION, 1, PADDING, KERNEL_DIM,
+        BATCH_SIZE, IN_DIM, IN_CHANNELS,
+        OUT_CHANNELS, OUT_DIM,
+        STRIDE, 1, 1, PADDING, KERNEL_DIM,
         false, false, false, false, false,
 
         (elem_t*)input,
@@ -265,8 +211,9 @@ int main() {
 
         NO_ACTIVATION, ACC_SCALE_IDENTITY, 0, 0, 0,
 
-        // CPU);
         WS);
+
+    gemmini_fence();
     uint64_t end_gemmini = read_cycles();
     printf("Gemmini conv took %llu cycles\n", end_gemmini - start_gemmini);
 
@@ -274,13 +221,13 @@ int main() {
 
 #ifdef FAST
     bool success = true;
-    for (int orow = 0; orow < BATCH_SIZE * OUT_ROW_DIM * OUT_COL_DIM; orow++) {
+    for (int orow = 0; orow < BATCH_SIZE * OUT_DIM * OUT_DIM; orow++) {
       for (int ocol = 0; ocol < OUT_CHANNELS; ocol++) {
-        elem_t v = output_mat[orow][ocol];
-        if (v != 6 && v != 11 && v != 21) {
-          success = false;
-          break;
-        }
+	elem_t v = output_mat[orow][ocol];
+	if (v != 21 && v != 31 && v != 46) {
+	  success = false;
+	  break;
+	}
       }
     }
 #else
@@ -327,9 +274,9 @@ int main() {
         printf("input:\n");
         for (int batch = 0; batch < BATCH_SIZE; batch++) {
             printf("[");
-            for (int irow = 0; irow < IN_ROW_DIM; irow++) {
+            for (int irow = 0; irow < IN_DIM; irow++) {
                 printf("[");
-                for (int icol = 0; icol < IN_COL_DIM; icol++) {
+                for (int icol = 0; icol < IN_DIM; icol++) {
                     printf("[");
                     for (int ich = 0; ich < IN_CHANNELS; ich++) {
                         printf("%d,", input[batch][irow][icol][ich]);
@@ -345,9 +292,9 @@ int main() {
         printf("output:\n");
         for (int batch = 0; batch < BATCH_SIZE; batch++) {
             printf("[");
-            for (int orow = 0; orow < OUT_ROW_DIM; orow++) {
+            for (int orow = 0; orow < OUT_DIM; orow++) {
                 printf("[");
-                for (int ocol = 0; ocol < OUT_COL_DIM; ocol++) {
+                for (int ocol = 0; ocol < OUT_DIM; ocol++) {
                     printf("[");
                     for (int och = 0; och < OUT_CHANNELS; och++) {
                         printf("%d,", output[batch][orow][ocol][och]);
@@ -361,7 +308,7 @@ int main() {
         printf("\b\n\n");
 
         printf("output_mat:\n");
-        for (int orow = 0; orow < BATCH_SIZE * OUT_ROW_DIM * OUT_COL_DIM; orow++) {
+        for (int orow = 0; orow < BATCH_SIZE * OUT_DIM * OUT_DIM; orow++) {
             printf("[");
             for (int ocol = 0; ocol < OUT_CHANNELS; ocol++) {
                 printf("%d,", output_mat[orow][ocol]);

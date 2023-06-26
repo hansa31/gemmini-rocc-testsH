@@ -1,9 +1,7 @@
 include $(abs_top_srcdir)/Makefrag
 
 tests = \
-	resnet50 \
-	mobilenet \
-	# alexnet \
+	transformer \
 
 tests_baremetal = $(tests:=-baremetal)
 runs_baremetal = $(addsuffix .run,$(tests_baremetal))
@@ -55,11 +53,11 @@ all: $(tests_baremetal) $(tests_linux) $(tests_pk)
 
 vpath %.c $(src_dir)
 
-%-baremetal: %.c $(src_dir)/images.h $(GEMMINI_HEADERS)
+%-baremetal: %.c $(GEMMINI_HEADERS)
 	$(CC_BAREMETAL) $(CFLAGS_BAREMETAL) $< $(LFLAGS) -o $@ \
 		$(wildcard $(BENCH_COMMON)/*.c) $(wildcard $(BENCH_COMMON)/*.S) $(LIBS)
 
-%-linux: %.c $(src_dir)/images.h $(GEMMINI_HEADERS)
+%-linux: %.c $(GEMMINI_HEADERS)
 	$(CC_LINUX) $(CFLAGS) $< $(LFLAGS) -o $@
 
 %-pk: %.c $(GEMMINI_HEADERS)
