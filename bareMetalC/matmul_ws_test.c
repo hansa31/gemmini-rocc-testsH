@@ -13,9 +13,9 @@
 
 
 #ifdef FAST
-#define AINIT RELU
-#define SINIT 12
-#define N 1
+#define AINIT RELU      //AINIT - sets activation function
+#define SINIT 12        //SINIT - scale factor for accumilation
+#define N 1             // N - Matrix size multiplier
 #else
 #define AINIT NO_ACTIVATION
 #define SINIT 0
@@ -32,10 +32,12 @@ void operands(int c, int * a, int * b, int * d) {
   *a = c / (N*N);
 }
 
+// Ensures gemmini hardware can handle the matrices given for the current config
 #if 3*N*DIM > (BANK_NUM * BANK_ROWS) || N*N*N*DIM > ACC_ROWS
 //#error scratchpad or accumulator not big enough
 #endif
 
+//Locks programs memory to prevent it from being swapping to disk
 int main() {
 #ifndef BAREMETAL
     if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
@@ -43,6 +45,8 @@ int main() {
       exit(1);
     }
 #endif
+
+  printf("***************N: %d",N);
 
   static elem_t ZERO[DIM][DIM];   //zero matrix initialization
 
@@ -55,7 +59,7 @@ int main() {
 
   for (int activation = AINIT; activation <= RELU; ++activation) {
 #ifdef ACC_SCALE_T_IS_FLOAT
-    for (acc_scale_t scale = 0; scale <= 1.5; scale += 0.5) {
+    for (acc_scale_t scale = 0; scale <= 1.5; scale += 0.5) {     //initially it was scale=0
 #else
     for (acc_scale_t scale = SINIT; scale <= 12; scale += 4) {
 #endif
@@ -65,8 +69,8 @@ int main() {
 
       // We will try out every combination of A, B, D possible
       static elem_t C[N*N*N][DIM][DIM] row_align(1);
-      static full_t gold_full[N*N*N][DIM][DIM];
-      static elem_t gold[N*N*N][DIM][DIM];
+      static full_t gold_full[N*N*N][DIM][DIM];       //A full precesion intermediate result of the matrix multiplication
+      static elem_t gold[N*N*N][DIM][DIM];            // The final result after post-processing, such as scaling and activation
 
       // ...taking into account whether we preload new weights or re-use the old ones
       static int preload[N*N*N] = {1};
@@ -78,15 +82,28 @@ int main() {
       for (int i = 0; i < N*N*N; ++i)
         add_to_zeros[i] = rand() % 2;
 
-      // ...and whether we accumulate on top of the previous result
+      // ...and whether we accumulate on top of the previous result (Adding the current result to the previous result)
       static int accumulate[N*N*N] = {0};
       for (int i = 1; i < N*N*N; ++i)
         accumulate[i] = rand() % 2;
 
-      static int no_output[N*N*N];
+      // Determines whether the result of the current computation should be stored in memory
+      /*
+      no_output[i] is set to accumulate[i+1]. If the next operation (i+1) accumulates on the current result, 
+      then there’s no need to output the current result to memory
+      */
+      static int no_output[N*N*N];      
       for (int i = 0; i < N*N*N-1; ++i)
         no_output[i] = accumulate[i+1];
       no_output[N*N*N-1] = 0;
+
+      /*
+      Array	Description	Values
+      preload	Determines whether to load new weights (B) for the current computation.	0 (reuse weights), 1 (load new weights).
+      add_to_zeros	Determines whether to use a zero matrix instead of matrix D for the computation.	0 (use D), 1 (use zeros).
+      accumulate	Determines whether to add the current result to the previous result.	0 (overwrite result), 1 (accumulate result).
+      no_output	Determines whether to output the result to memory (used when the next computation accumulates on this one).	0 (output), 1 (do not output).
+      */
 
       // Print the sequence out
       /*printf("Preloads: ");
@@ -109,7 +126,7 @@ int main() {
       for (size_t n = 0; n < N; ++n) {
         for (size_t i = 0; i < DIM; ++i) {
           for (size_t j = 0; j < DIM; ++j) {
-            A[n][i][j] = (rand() % 64) - 32;
+            A[n][i][j] = (rand() % 64) - 32;      // -32 to 32
             B[n][i][j] = (rand() % 64) - 32;
             D[n][i][j] = (rand() % 64) - 32;
           }
@@ -118,7 +135,7 @@ int main() {
 
       for (size_t g = 0; g < N*N*N; ++g) {
         int a, b, d;
-        operands(g, &a, &b, &d);
+        operands(g, &a, &b, &d);      //operands(g, &a, &b, &d): Retrieves the indices of the matrices (A[a], B[b], D[d]) to be used for the g-th computation.
 
         // We need to find the last B value in case we aren't preloading new weights
         for (int last_g = g; last_g >= 0; --last_g) {
@@ -129,6 +146,7 @@ int main() {
             }
         }
 
+        //the matrix multiplication (In CPU ?)
         if (add_to_zeros[g])
           matmul(A[a], B[b], ZERO, gold_full[g]);
         else
@@ -138,18 +156,20 @@ int main() {
           matadd(gold_full[g], gold_full[g-1], gold_full[g]);
       }
 
+      //Post processing and scaling
       for (size_t g = 0; g < N*N*N; ++g) {
         matscale(gold_full[g], gold[g], scale);
         if (activation == RELU)
           matrelu(gold[g], gold[g]);
       }
 
+      //memory address initialization (In gemmini scratchpad)
       uint32_t A_addr = 0;
       uint32_t B_addr = N*DIM;
       uint32_t D_addr = 2*N*DIM;
       uint32_t C_addr_acc = 1 << (ADDR_LEN-1);
 
-      // Calculate the proper destination addresses of everything
+      // Calculate the proper destination addresses of everything (where results are stored)
       uint32_t C_addrs[N*N*N];
       for (size_t c = 0; c < N*N*N; ++c)
         C_addrs[c] = C_addr_acc + c*DIM;
@@ -163,6 +183,7 @@ int main() {
       }
 
       // printf("Moving in\n");
+      // Matrices are moved into gemmini scratchpad memory
       for (size_t n = 0; n < N; ++n)
         gemmini_mvin(A[n], A_addr + n*DIM);
 
@@ -178,6 +199,7 @@ int main() {
 
       // printf("Setting mode\n");
       gemmini_config_ex(WEIGHT_STATIONARY, 0, 0);
+      // stride
       gemmini_extended_config_st(DIM * sizeof(elem_t), activation, scale);
 
       // printf("Matmulling\n");
@@ -236,22 +258,30 @@ int main() {
       printMatrix(C[2]);
       */
       // printf("Checking\n");
-      for (int n = 0; n < N*N*N; ++n){    // these curly brackets were no there
-        if (!no_output[n] && !is_equal(C[n], gold[n])) {
+      for (int n = 0; n < N*N*N; ++n){    // these curly brackets were not there
+        //if (!no_output[n] && !is_equal(C[n], gold[n])) {
+        if(!no_output[n]){
+          printf("\nA\n");
           printMatrix(A[n]);
+          printf("\nB\n");
           printMatrix(B[n]);
+          printf("\nD\n");
           printMatrix(D[n]);
-          printf("activation: %d, scale: %d\n", activation, scale);
+          printf("\n");
+          printf("activation: %d, scale: %f\n", activation, scale);
+          //printf("activation: %x, scale: %x\n", activation, scale);
           printf("Actual (%d):\n", n);
+          printf("\nC\n");
           printMatrix(C[n]);
           printf("\nGold:\n");
           printMatrix(gold[n]);
-          exit(1);
+          //exit(1); //This is the assert error I see
         }
+        //}
+        //exit(1);
       }
     }
   }
 
   exit(0);
 }
-

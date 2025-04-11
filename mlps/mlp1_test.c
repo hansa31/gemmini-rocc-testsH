@@ -8,12 +8,18 @@
 #include "include/gemmini.h"
 #include "include/gemmini_nn.h"
 
-#include "parameters5.h"        //contains weights and biases for the neural network
+#include "parameters1.h"
+
+static inline uint64_t rdtime() {
+    uint64_t time;
+    asm volatile ("rdtime %0" : "=r"(time));
+    return time;
+}
 
 int main (int argc, char * argv[]) {
 #ifndef BAREMETAL
     if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
-      perror("mlockall failed");        //prevents the OS from swapping memory - for real time performance for Gemmini
+      perror("mlockall failed");
       exit(1);
     }
 #endif
@@ -49,81 +55,109 @@ int main (int argc, char * argv[]) {
         exit(1);
     }
 
-    uint64_t cycles[6]={0};     //stores cycle count for each 6 layers
-    uint64_t start,end;
+    //uint64_t cycles[6] = {0};
+    uint64_t time[6] = {0};
+    //uint64_t start, end;
 
     /* matmul number: 0 */
-    start = read_cycles();
+    //start = read_cycles();
+    uint64_t start0 = rdtime();
 
     tiled_matmul_nn_auto(64, 2560, 832,
         input_mat, weights0, NULL, inter_results0,
         RELU, 0, false,
         tiled_matmul_type, check, "layer_0");
 
-    end = read_cycles();
-    cycles[0] = end-start;
+    //end = read_cycles();
+    uint64_t end0 = rdtime();
+    //cycles[0] = end-start;
+    time[0] = end0 - start0;
 
     /* matmul number: 1 */
-    start = read_cycles();
+    //start = read_cycles();
+    uint64_t start1 = rdtime();
 
     tiled_matmul_nn_auto(64, 2048, 2560,
         inter_results0, weights1, NULL, inter_results1,
         RELU, 0, false,
         tiled_matmul_type, check, "layer_1");
 
-    end = read_cycles();
-    cycles[1] = end-start;
+    //end = read_cycles();
+    uint64_t end1 = rdtime();
+    //cycles[1] = end-start;
+    time[1] = end1 - start1;
 
     /* matmul number: 2 */
-    start = read_cycles();
+    //start = read_cycles();
+    uint64_t start2 = rdtime();
 
     tiled_matmul_nn_auto(64, 1536, 2048,
         inter_results1, weights2, NULL, inter_results2,
         RELU, 0, false,
         tiled_matmul_type, check, "layer_2");
 
-    end = read_cycles();
-    cycles[2] = end-start;
+    //end = read_cycles();
+    uint64_t end2 = rdtime();
+    //cycles[2] = end-start;
+    time[2] = end2 - start2;
 
     /* matmul number: 3 */
-    start = read_cycles();
+    //start = read_cycles();
+    uint64_t start3 = rdtime();
 
     tiled_matmul_nn_auto(64, 1024, 1536,
         inter_results2, weights3, NULL, inter_results3,
         RELU, 0, false,
         tiled_matmul_type, check, "layer_3");
 
-    end = read_cycles();
-    cycles[3] = end-start;
+    //end = read_cycles();
+    uint64_t end3 = rdtime();
+    //cycles[3] = end-start;
+    time[3] = end3 - start3;
 
     /* matmul number: 4 */
-    start = read_cycles();
+    //start = read_cycles();
+    uint64_t start4 = rdtime();
 
     tiled_matmul_nn_auto(64, 512, 1024,
         inter_results3, weights4, NULL, inter_results4,
         RELU, 0, false,
         tiled_matmul_type, check, "layer_4");
 
-    end = read_cycles();
-    cycles[4] = end-start;
+    //end = read_cycles();
+    uint64_t end4 = rdtime();
+    //cycles[4] = end-start;
+    time[4] = end4 - start4;
 
     /* matmul number: 5 */
-    start = read_cycles();
+    //start = read_cycles();
+    uint64_t start5 = rdtime();
 
     tiled_matmul_nn_auto(64, 64, 512,
         inter_results4, weights5, NULL, inter_results5,
         RELU, 0, false,
         tiled_matmul_type, check, "layer_5");
 
-    end = read_cycles();
-    cycles[5] = end-start;
+    //end = read_cycles();
+    uint64_t end5 = rdtime();
+    //cycles[5] = end-start;
+    time[5] = end5 - start5;
 
+    /*
     uint64_t overall_cycles = 0;
     for(int cyc = 0; cyc < 6 ; cyc++){
         overall_cycles += cycles[cyc];
-        printf("Cycles taken in layer %d: %llu\n", cyc,cycles[cyc]);
+        printf("Cycles taken in layer %d: %llu\n", cyc, cycles[cyc]);
     }
-    printf("Overall cycles taken: %llu\n",overall_cycles);
+    printf("Overall cycles taken: %llu\n", overall_cycles);
+    */
+
+    uint64_t overall_cycles = 0;
+    for(int cyc = 0; cyc < 6 ; cyc++){
+        overall_cycles += time[cyc];
+        printf("Cycles taken in layer %d: %llu\n", cyc, time[cyc]);
+    }
+    printf("Overall cycles taken: %llu\n", overall_cycles);
 
     return 0;
 }

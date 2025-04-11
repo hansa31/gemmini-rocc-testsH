@@ -59,6 +59,9 @@ int main() {
   // printf("Fence\n");
   gemmini_fence();
 
+  printf("Matrix:\n");
+  printMatrix(In.data);
+
   if (!is_equal(In.data, Out.data)) {
     printf("Matrix:\n");
     printMatrix(In.data);

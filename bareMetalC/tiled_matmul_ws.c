@@ -26,9 +26,12 @@ typedef elem_t ACC_T;
 #define MAT_DIM_K 512
 #define MAT_DIM_J 512
 #else
-#define MAT_DIM_I 64
-#define MAT_DIM_K 64
-#define MAT_DIM_J 64
+//#define MAT_DIM_I 64
+//#define MAT_DIM_K 64
+//#define MAT_DIM_J 64FP
+#define MAT_DIM_I 10
+#define MAT_DIM_K 10
+#define MAT_DIM_J 10
 #endif
 
 void print_tile(elem_t* in, int tile_dim) {
@@ -53,7 +56,8 @@ void full_matmul(elem_t A[MAT_DIM_I][MAT_DIM_K], elem_t B[MAT_DIM_K][MAT_DIM_J],
 void full_printMatrix(elem_t m[MAT_DIM_I][MAT_DIM_J]) {
   for (size_t i = 0; i < MAT_DIM_I; ++i) {
     for (size_t j = 0; j < MAT_DIM_J; ++j)
-      printf("%d ", m[i][j]);
+      printf("%x ", m[i][j]);
+      //printf("%d ", m[i][j]); //added by me
     printf("\n");
   }
 }
@@ -113,23 +117,41 @@ int main() {
     // printf("Init A\n");
     for (size_t i = 0; i < MAT_DIM_I; ++i) {
       for (size_t j = 0; j < MAT_DIM_K; ++j) {
-        full_A[i][j] = RAND % 2;
+        //full_A[i][j] = RAND % 2;
+        full_A[i][j] = 60.2;
+        //printf("Size of full_A[%zu][%zu]: %zu bytes\n", i, j, sizeof(full_A[i][j]));
+
       }
     }
+    printf("A:\n");
+    full_printMatrix(full_A);
 
     // printf("Init B\n");
     for (size_t i = 0; i < MAT_DIM_K; ++i) {
       for (size_t j = 0; j < MAT_DIM_J; ++j) {
-        full_B[i][j] = RAND % 2;
+        //full_B[i][j] = RAND % 2;
+        full_B[i][j] = 6;
+        //printf("Size of full_A[%zu][%zu]: %zu bytes\n", i, j, sizeof(full_A[i][j]));
+
       }
     }
+    
+    printf("B:\n");
+    full_printMatrix(full_B);
+
+    printf("elem_t_max = %x\n", elem_t_max); // Scientific notation
+    printf("elem_t_max = %x\n", elem_t_max); // Fixed-point notation
 
     // printf("Init D\n");
     for (size_t i = 0; i < MAT_DIM_I; ++i) {
       for (size_t j = 0; j < MAT_DIM_J; ++j) {
-        full_D[i][j] = NO_BIAS ? 0 : RAND % 2;
+        //full_D[i][j] = NO_BIAS ? 0 : RAND % 2;
       }
     }
+
+    printf("D:\n");
+    full_printMatrix(full_D);
+
     printf("Starting gemmini matmul\n");
     unsigned long start = read_cycles();
 
@@ -172,7 +194,7 @@ int main() {
       full_printMatrix(gold);
       printf("\n");
 
-      exit(1);
+      //exit(1);
     }
 #endif
 

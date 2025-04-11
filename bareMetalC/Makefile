@@ -1,6 +1,11 @@
 include $(abs_top_srcdir)/Makefrag
 
 tests = \
+	tiled_matmul_ws_test_nfp \
+	conv_test \
+	tiled_matmul_os_test \
+	tiled_matmul_ws_test \
+	matmul_ws_test \
 	mvin_mvout \
 	mvin_mvout_zeros \
 	mvin_mvout_stride \

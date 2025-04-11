@@ -1,6 +1,7 @@
 include $(abs_top_srcdir)/Makefrag
 
 tests = \
+	mlp1_test \
 	test \
 	mlp1 \
 	mlp2 \

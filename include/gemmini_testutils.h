@@ -207,8 +207,10 @@ static void printMatrix(elem_t m[DIM][DIM]) {
     for (size_t j = 0; j < DIM; ++j)
 #ifndef ELEM_T_IS_FLOAT
       printf("%d ", m[i][j]);
+      //printf("%x ", elem_t_to_elem_t_bits(m[i][j]));
 #else
-      printf("%x ", elem_t_to_elem_t_bits(m[i][j]));
+     printf("%x ", elem_t_to_elem_t_bits(m[i][j]));
+     //printf("%f ", m[i][j]);
 #endif
     printf("\n");
   }
