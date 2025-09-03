@@ -1,6 +1,11 @@
 include $(abs_top_srcdir)/Makefrag
 
 tests = \
+	tiled_matmul_ws_test_nfp \
+	conv_test \
+	tiled_matmul_os_test \
+	tiled_matmul_ws_test \
+	matmul_ws_test \
 	mvin_mvout \
 	mvin_mvout_zeros \
 	mvin_mvout_stride \
@@ -10,11 +15,9 @@ tests = \
 	mvin_mvout_acc_stride \
 	mvin_mvout_acc_full \
 	mvin_mvout_acc_full_stride \
-	mvin_mvout_spad \
 	matmul_os \
 	matmul_ws \
 	matmul \
-	matmul_spad \
 	raw_hazard \
 	aligned \
 	padded \
@@ -67,8 +70,6 @@ else
 # Don't run very long benchmarks for RTL sim
 runs_baremetal = $(addsuffix .run,$(filter-out tiled_matmul_cpu-baremetal tiled_matmul_option-baremetal,$(tests_baremetal)))
 endif
-# Nornaml configs dont have ext spad
-runs_baremetal := $(filter-out matmul_spad-baremetal.run mvin_mvout_spad-baremetal.run,$(runs_baremetal))
 
 ifdef BAREMETAL_ONLY
 	tests_linux =
