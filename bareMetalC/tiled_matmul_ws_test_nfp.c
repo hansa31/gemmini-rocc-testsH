@@ -333,7 +333,7 @@ int main() {
     //printf("Time taken: %f seconds\n", elapsed_time);
 
     //uint64_t start = rdtime();
-    printf("rdtime");
+    //printf("rdtime");
 
     tiled_matmul_auto(MAT_DIM_I, MAT_DIM_J, MAT_DIM_K,
             (elem_t*)full_A, (elem_t*)full_B, NO_BIAS ? NULL : &full_D[0][0], (elem_t*)full_C,
@@ -357,7 +357,7 @@ int main() {
     //printf("Time units: %llu\n", end - start);
 
 
-    printf("Starting slow CPU matmul\n");
+    printf("Starting slow CPU matmul1\n");
     //unsigned long cpu_start = read_cycles();
     //uint64_t start2 = rdtime();
 #ifdef FAST
