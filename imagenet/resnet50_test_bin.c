@@ -166,7 +166,7 @@ int main (int argc, char * argv[]) {
             im2col(conv_1_params.batch_size, conv_1_params.in_channels,
                 conv_1_params.in_row_dim, conv_1_params.in_col_dim,
                 conv_1_params.I, conv_1_params.K,
-                images, conv_1_in, &conv_1_params);
+                current_images, conv_1_in, &conv_1_params);
 
         ////end = read_cycles();
             ////im2col_cycles += //end - //start;
@@ -202,7 +202,7 @@ int main (int argc, char * argv[]) {
                 conv_1_params.stride, 1, 1, conv_1_params.padding, conv_1_params.kernel_size,
                 false, false, false, false, false,
 
-                (elem_t*)images, (elem_t*)conv_1_w, (acc_t*)conv_1_b, (elem_t*)conv_1_out_pooled,
+                (elem_t*)current_images, (elem_t*)conv_1_w, (acc_t*)conv_1_b, (elem_t*)conv_1_out_pooled,
 
                 RELU, conv_1_params.output_scale,
                 conv_1_params.pool_size, conv_1_params.pool_stride, conv_1_params.pool_padding,
@@ -2163,6 +2163,43 @@ int main (int argc, char * argv[]) {
         //matmul_cycles += //end - //start;
         //printf("matmul 54 cycles: %llu \n", //end - //start);
 
+        /*
+        // Find highest probs
+        int preds[fc_54_params.batch_size];
+        for (int batch = 0; batch < fc_54_params.batch_size; batch++) {
+            elem_t max_prob = fc_54_out[0][batch];
+            size_t max_idx = 0;
+
+            for (int i = 1; i < fc_54_params.out_features; i++) {
+                if (fc_54_out[batch][i] > max_prob) {
+                    max_prob = fc_54_out[i][batch];
+                    max_idx = i;
+                }
+            }
+
+            preds[batch] = max_idx;
+            printf("Prediction: %u (score: %d)\n", max_idx, max_prob);
+        }*/
+
+       /*
+        int preds[fc_54_params.batch_size];
+        for (int batch = 0; batch < fc_54_params.batch_size; batch++) {
+            float max_prob = fc_54_out[0][batch];
+            int max_idx = 0;
+
+            for (int i = 1; i < fc_54_params.out_features; i++) {
+                float score = fc_54_out[i][batch];
+                if (score > max_prob) {
+                    max_prob = score;
+                    max_idx = i;
+                }
+            }
+
+            preds[batch] = max_idx;
+            printf("Prediction: %d (score: %f)\n", max_idx, max_prob);
+        }*/
+
+        //Original
         // Find highest probs
         int preds[fc_54_params.batch_size];
         for (int batch = 0; batch < fc_54_params.batch_size; batch++) {
@@ -2192,7 +2229,7 @@ int main (int argc, char * argv[]) {
             int top_indices[TOP_K] = {0};
 
             for (int i = 0; i < fc_54_params.out_features; i++) {
-                float score = fc_54_out[i][batch];
+                float score = fc_54_out[batch][i];
 
                 // Insert score into top_scores if it's high enough
                 for (int k = 0; k < TOP_K; k++) {

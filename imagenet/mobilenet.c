@@ -65,6 +65,25 @@ int main (int argc, char * argv[]) {
         exit(1);
     }
 
+    printf("\n--- Parsed Command Line Arguments ---\n");
+    printf("tiled_matmul_type: ");
+    switch (tiled_matmul_type) {
+        case CPU:
+            printf("CPU\n");
+            break;
+        case OS:
+            printf("OS\n");
+            break;
+        case WS:
+            printf("WS\n");
+            break;
+        default:
+            printf("Unknown (%d)\n", tiled_matmul_type);
+            break;
+    }
+    printf("conv: %s\n", conv ? "true" : "false");
+    printf("check: %s\n", check ? "true" : "false");
+
     uint64_t start, end;
     uint64_t im2col_cycles = 0, matmul_cycles = 0, conv_cycles = 0, pool_cycles = 0, conv_dw_cycles = 0, res_add_cycles = 0, other_cycles = 0;
 
