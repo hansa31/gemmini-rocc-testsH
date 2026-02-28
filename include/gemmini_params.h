@@ -5,27 +5,28 @@
 #include <limits.h>
 
 #define XCUSTOM_ACC 3
-#define DIM 4
+#define DIM 16
 #define ADDR_LEN 32
 #define BANK_NUM 4
-#define BANK_ROWS 4096
+#define BANK_ROWS 8192
 #define ACC_ROWS 4096
 #define MAX_BYTES 64
-#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*4))
+#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*2))
 #define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*4))
 
-typedef float elem_t;
-static const elem_t elem_t_max = 3.4028235E38;
-static const elem_t elem_t_min = -3.4028235E38;
+typedef uint16_t elem_t;
+#define ELEM_T_IS_LOWPREC_FLOAT
+static const float elem_t_max = 3.3895313892515355E38;
+static const float elem_t_min = -3.3895313892515355E38;
 typedef float acc_t;
 typedef double full_t;
 
 #define ELEM_T_IS_FLOAT
 #define ELEM_T_EXP_BITS 8
-#define ELEM_T_SIG_BITS 24
+#define ELEM_T_SIG_BITS 8
 #define ACC_T_EXP_BITS 8
 #define ACC_T_SIG_BITS 24
-typedef uint32_t elem_t_bits;
+typedef uint16_t elem_t_bits;
 typedef uint32_t acc_t_bits;
 
 #define HAS_MVIN_SCALE
