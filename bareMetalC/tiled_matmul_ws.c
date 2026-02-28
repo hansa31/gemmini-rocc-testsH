@@ -26,9 +26,9 @@ typedef elem_t ACC_T;
 #define MAT_DIM_K 512
 #define MAT_DIM_J 512
 #else
-#define MAT_DIM_I 6
-#define MAT_DIM_K 6
-#define MAT_DIM_J 6
+#define MAT_DIM_I 64
+#define MAT_DIM_K 64
+#define MAT_DIM_J 64
 #endif
 
 void print_tile(elem_t* in, int tile_dim) {
@@ -131,7 +131,7 @@ int main() {
       }
     }
     printf("Starting gemmini matmul\n");
-    //unsigned long start = read_cycles();
+    unsigned long start = read_cycles();
 
     tiled_matmul_auto(MAT_DIM_I, MAT_DIM_J, MAT_DIM_K,
             (elem_t*)full_A, (elem_t*)full_B, NO_BIAS ? NULL : &full_D[0][0], (elem_t*)full_C,
@@ -143,12 +143,12 @@ int main() {
             0,
             WS);
 
-    //unsigned long end = read_cycles();
-//printf("Cycles taken: %u\n", end-start);
+    unsigned long end = read_cycles();
+    printf("Cycles taken: %u\n", end-start);
 
 
-    //printf("Starting slow CPU matmul\n");
-   // unsigned long cpu_start = read_cycles();
+    printf("Starting slow CPU matmul\n");
+    unsigned long cpu_start = read_cycles();
 #ifdef FAST
     for (size_t i = 0; i < MAT_DIM_I; ++i) {
       for (size_t j = 0; j < MAT_DIM_J; ++j) {
@@ -159,21 +159,22 @@ int main() {
 #else
     full_matmul(full_A, full_B, full_D, gold_full);
 #endif
-    //unsigned long cpu_end = read_cycles();
-    //printf("Cycles taken: %u\n", cpu_end-cpu_start);
+    unsigned long cpu_end = read_cycles();
+    printf("Cycles taken: %u\n", cpu_end-cpu_start);
     full_matscale(gold_full, gold, ACC_SCALE_IDENTITY);
 #endif
 
 #if CHECK_RESULT == 1
-    //if (!full_is_equal(full_C, gold)) {
+    if (!full_is_equal(full_C, gold)) {
       printf("C:\n");
       full_printMatrix(full_C);
       printf("Gold:\n");
       full_printMatrix(gold);
-      printf("\n");
+      printf("\n");// See LICENSE for license details.
+      exit(1);
+    }
 
-    //  exit(1);
-    //}
+
 #endif
 
   exit(0);
