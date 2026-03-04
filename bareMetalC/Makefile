@@ -1,6 +1,7 @@
 include $(abs_top_srcdir)/Makefrag
 
 tests = \
+	matmul_print \
 	mvin_mvout \
 	mvin_mvout_zeros \
 	mvin_mvout_stride \
