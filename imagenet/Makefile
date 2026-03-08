@@ -4,6 +4,7 @@ tests = \
 	resnet50_test_bin_time \
 	mobilenet_test_bin_time \
 	mobilenet_test_time_fp16 \
+	mobilenet_v1 \
 	resnet50 \
 	mobilenet \
 	# alexnet \
