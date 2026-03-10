@@ -1,6 +1,10 @@
 include $(abs_top_srcdir)/Makefrag
 
 tests = \
+	hello \
+	test1_headers \
+	test2_flush \
+	test3_matmul \
 	matmul_print \
 	mvin_mvout \
 	mvin_mvout_zeros \
@@ -122,7 +126,7 @@ vpath %.c $(src_dir)
 		$(wildcard $(BENCH_COMMON)/*.c) $(wildcard $(BENCH_COMMON)/*.S) $(LIBS)
 
 %-linux: %.c $(GEMMINI_HEADERS)
-	$(CC_LINUX) $(CFLAGS) $< $(LFLAGS) -o $@
+	$(CC_LINUX) $(CFLAGS) -static $< $(LFLAGS) -o $@
 
 %-pk: %.c $(GEMMINI_HEADERS)
 	$(CC_LINUX) $(CFLAGS_PK) $< $(LFLAGS) -o $@
