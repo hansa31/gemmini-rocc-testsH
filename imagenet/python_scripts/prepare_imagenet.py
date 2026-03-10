@@ -40,17 +40,16 @@ except ImportError:
 
 # ---------- Preprocessing matching the original Gemmini quantization ----------
 
-def preprocess_image(img_path, input_size=224, scale=1.0, zero_point=0):
+def preprocess_image(img_path, input_size=224, scale=1.0, zero_point=-128):
     """Load an image, resize/center-crop to input_size, and quantize to int8.
 
-    The preprocessing mirrors typical MobileNetV1 int8 quantization:
+    The preprocessing mirrors the original Gemmini images.h quantization:
       1. Resize shortest side to 256, bilinear interpolation
       2. Center crop to 224x224
       3. Convert to float [0, 255]
       4. Apply quantization: int8_val = round(pixel * scale) + zero_point
-         Default: identity mapping (scale=1, zero_point=0), clamp to [-128, 127]
-
-    Adjust `scale` and `zero_point` to match your specific quantization scheme.
+         Default: scale=1, zero_point=-128 maps [0,255] -> [-128,127]
+         This matches the signed int8 range seen in the original images.h.
     """
     img = Image.open(img_path).convert("RGB")
 
@@ -117,9 +116,9 @@ def main():
     parser.add_argument("--output-prefix", default="imagenet_val",
                         help="Prefix for output files (default: imagenet_val)")
     parser.add_argument("--scale", type=float, default=1.0,
-                        help="Quantization scale factor (default: 1.0, identity)")
-    parser.add_argument("--zero-point", type=int, default=0,
-                        help="Quantization zero point (default: 0)")
+                        help="Quantization scale factor (default: 1.0)")
+    parser.add_argument("--zero-point", type=int, default=-128,
+                        help="Quantization zero point (default: -128, maps [0,255] to [-128,127])")
     args = parser.parse_args()
 
     filenames, all_labels = parse_labels_file(args.labels_file, args.labels_format)
