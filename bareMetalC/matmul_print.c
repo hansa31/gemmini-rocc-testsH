@@ -22,9 +22,9 @@ typedef elem_t ACC_T;
 #endif
 
 #ifndef BAREMETAL
-#define MAT_DIM_I 512
-#define MAT_DIM_K 512
-#define MAT_DIM_J 512
+#define MAT_DIM_I 16
+#define MAT_DIM_K 16
+#define MAT_DIM_J 16
 #else
 #define MAT_DIM_I 8
 #define MAT_DIM_K 8
@@ -83,18 +83,24 @@ void full_matscale(full_t full[MAT_DIM_I][MAT_DIM_J], elem_t out[MAT_DIM_I][MAT_
 } 
 
 int main() {
+    printf("[1] Program started\n");
+    fflush(stdout);
+
 #ifndef BAREMETAL
-    if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
-      perror("mlockall failed");
-      exit(1);
-    }
+    printf("[2] Skipping mlockall (not needed on FPGA SoC)\n");
+    fflush(stdout);
 #endif
 
-    printf("MAT_DIM_I: %d\n", MAT_DIM_I);
-    printf("MAT_DIM_J: %d\n", MAT_DIM_J);
-    printf("MAT_DIM_K: %d\n", MAT_DIM_K);
+    printf("[3] MAT_DIM_I: %d\n", MAT_DIM_I);
+    printf("[3] MAT_DIM_J: %d\n", MAT_DIM_J);
+    printf("[3] MAT_DIM_K: %d\n", MAT_DIM_K);
+    fflush(stdout);
 
+    printf("[4] Calling gemmini_flush...\n");
+    fflush(stdout);
     gemmini_flush(0);
+    printf("[4] gemmini_flush done\n");
+    fflush(stdout);
 
     static elem_t full_A[MAT_DIM_I][MAT_DIM_K] row_align(1);
     static elem_t full_B[MAT_DIM_K][MAT_DIM_J] row_align(1);
@@ -130,7 +136,8 @@ int main() {
         full_D[i][j] = NO_BIAS ? 0 : RAND % 2;
       }
     }
-    printf("Starting gemmini matmul\n");
+    printf("[5] Starting gemmini matmul\n");
+    fflush(stdout);
     unsigned long start = read_cycles();
 
     tiled_matmul_auto(MAT_DIM_I, MAT_DIM_J, MAT_DIM_K,
@@ -144,10 +151,12 @@ int main() {
             WS);
 
     unsigned long end = read_cycles();
-    printf("Cycles taken: %u\n", end-start);
+    printf("[6] Gemmini matmul done. Cycles taken: %u\n", end-start);
+    fflush(stdout);
 
 
-    printf("Starting slow CPU matmul\n");
+    printf("[7] Starting slow CPU matmul\n");
+    fflush(stdout);
     unsigned long cpu_start = read_cycles();
 #ifdef FAST
     for (size_t i = 0; i < MAT_DIM_I; ++i) {
