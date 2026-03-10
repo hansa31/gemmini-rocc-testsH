@@ -1,100 +1,82 @@
 # ImageNet Preparation Scripts for Gemmini
 
-Python utilities to prepare ImageNet validation images as input for the
-MobileNetV1 inference program (`mobilenet_v1.c`) running on the Gemmini accelerator.
+Prepare ImageNet validation images as input for `mobilenet_v1.c`.
 
-## Requirements
+## End-to-End: How to Run MobileNetV1 on the Full ImageNet Validation Set
+
+### 1. Install Python dependencies
 
 ```bash
 pip install numpy Pillow
 ```
 
-## Scripts
-
-### `prepare_imagenet.py`
-
-Reads ImageNet validation JPEGs, preprocesses them (resize to 256, center-crop
-to 224×224, quantize to int8), and writes:
-
-- **`imagenet_val_N.bin`** — flat binary file of N images, each 224×224×3 int8
-  values in HWC (row-major) layout, contiguous
-- **`imagenet_val_N_labels.txt`** — one integer label per line
-
-#### Quick start (full 50K validation set)
+### 2. Prepare the binary image file
 
 ```bash
+cd imagenet/python_scripts
+
 python prepare_imagenet.py \
     --imagenet-dir /path/to/ILSVRC2012_img_val \
     --labels-file /path/to/val.txt \
     --num-images 50000 \
-    --output-dir ../ \
-    --output-prefix imagenet_val
-```
-
-Where `val.txt` has lines like:
-```
-ILSVRC2012_val_00000001.JPEG 65
-ILSVRC2012_val_00000002.JPEG 970
-...
-```
-
-#### Subset (e.g. 200 images for testing)
-
-```bash
-python prepare_imagenet.py \
-    --imagenet-dir /path/to/ILSVRC2012_img_val \
-    --labels-file /path/to/val.txt \
-    --num-images 200 \
-    --output-dir ../ \
-    --output-prefix imagenet_val
-```
-
-#### Custom quantization
-
-If your model uses a different quantization scheme:
-
-```bash
-python prepare_imagenet.py \
-    --imagenet-dir /path/to/val \
-    --labels-file val.txt \
-    --scale 0.0078125 \
-    --zero-point -128 \
     --output-dir ../
 ```
 
-### `verify_images_bin.py`
+This produces two files in the `imagenet/` directory:
+- `imagenet_val_50000.bin` — 50K images as signed int8, ~7.2 GB
+- `imagenet_val_50000_labels.txt` — one label per line
 
-Reads back a binary file and prints statistics + first few pixels to verify
-correctness.
+The `val.txt` labels file has lines like: `ILSVRC2012_val_00000001.JPEG 65`
+
+For a smaller test run, use `--num-images 200`.
+
+### 3. (Optional) Verify the prepared data
 
 ```bash
-python verify_images_bin.py ../imagenet_val_200.bin ../imagenet_val_200_labels.txt --num-images 200
+python verify_images_bin.py ../imagenet_val_50000.bin ../imagenet_val_50000_labels.txt --num-images 50000 --show 3
 ```
 
-## Binary Format
+### 4. Configure `mobilenet_v1.c`
 
-The `.bin` file is a flat array of `int8` values:
-
-```
-[image_0: 224*224*3 bytes] [image_1: 224*224*3 bytes] ... [image_N-1]
-```
-
-Each image is stored in **HWC** (Height, Width, Channel) order with **RGB**
-channel ordering. This matches the layout in the original `images.h`:
+Edit the `#define`s at the top of `mobilenet_v1.c` to match your files:
 
 ```c
-static const elem_t images[4][224][224][3] = ...;
+#define NUM_IMAGES 50000
+#define IMAGES_BIN_FILE "imagenet_val_50000.bin"
+#define LABELS_TXT_FILE "imagenet_val_50000_labels.txt"
 ```
 
-The C program (`mobilenet_v1.c`) reads 4 images (one batch) at a time using
-sequential `fread`, keeping memory usage constant regardless of dataset size.
+For a 200-image test:
+```c
+#define NUM_IMAGES 200
+#define IMAGES_BIN_FILE "imagenet_val_200.bin"
+#define LABELS_TXT_FILE "imagenet_val_200_labels.txt"
+```
 
-## Data sizes
+### 5. Build and run
 
-| Images | Binary size |
-|--------|-------------|
-| 4      | ~588 KB     |
-| 200    | ~29 MB      |
-| 50,000 | ~7.2 GB     |
+```bash
+# Build (from gemmini-rocc-tests root)
+make -C imagenet
 
-The C program only needs ~600 KB of image memory at runtime (one batch of 4).
+# Run (place .bin and .txt files in the working directory)
+./imagenet/mobilenet_v1-linux ws conv
+```
+
+Arguments: `[ws|os|cpu] [conv|matmul] [check]`
+
+## How It Works
+
+- **Data format**: `elem_t = int8_t` (signed, -128 to 127). The Python script
+  maps pixel values [0, 255] → [-128, 127] by default (`zero_point=-128`),
+  matching the original `images.h` format.
+- **Binary layout**: flat contiguous int8 values, images back-to-back, HWC
+  (224×224×3 per image). Equivalent to `int8_t images[N][224][224][3]`.
+- **Streaming**: `mobilenet_v1.c` reads 4 images (one batch) at a time via
+  `fread`, keeping image memory constant at ~600 KB regardless of dataset size.
+- **Labels**: loaded fully into memory (50K ints = ~200 KB).
+
+| Images | Binary size | Image RAM in C |
+|--------|-------------|----------------|
+| 200    | ~29 MB      | ~600 KB        |
+| 50,000 | ~7.2 GB     | ~600 KB        |
