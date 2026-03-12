@@ -15,8 +15,10 @@ fi
 cd build
 
 if [[ $(which riscv64-unknown-linux-gnu-gcc) ]] ; then
-    make -j $@
+    # Force remake of all targets so previous build files are replaced
+    make -B -j $@
 else
-    make -j BAREMETAL_ONLY=1 $@
+    # Force remake for baremetal build as well
+    make -B -j BAREMETAL_ONLY=1 $@
 fi
 

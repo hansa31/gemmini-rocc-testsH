@@ -1,0 +1,42 @@
+# file_name  original_name  shape  dtype
+bert_embeddings_word_embeddings_weight.npy  bert.embeddings.word_embeddings.weight  [30522, 128]  float32
+bert_embeddings_position_embeddings_weight.npy  bert.embeddings.position_embeddings.weight  [512, 128]  float32
+bert_embeddings_token_type_embeddings_weight.npy  bert.embeddings.token_type_embeddings.weight  [2, 128]  float32
+bert_embeddings_LayerNorm_weight.npy  bert.embeddings.LayerNorm.weight  [128]  float32
+bert_embeddings_LayerNorm_bias.npy  bert.embeddings.LayerNorm.bias  [128]  float32
+bert_encoder_layer_0_attention_self_query_weight.npy  bert.encoder.layer.0.attention.self.query.weight  [128, 128]  float32
+bert_encoder_layer_0_attention_self_query_bias.npy  bert.encoder.layer.0.attention.self.query.bias  [128]  float32
+bert_encoder_layer_0_attention_self_key_weight.npy  bert.encoder.layer.0.attention.self.key.weight  [128, 128]  float32
+bert_encoder_layer_0_attention_self_key_bias.npy  bert.encoder.layer.0.attention.self.key.bias  [128]  float32
+bert_encoder_layer_0_attention_self_value_weight.npy  bert.encoder.layer.0.attention.self.value.weight  [128, 128]  float32
+bert_encoder_layer_0_attention_self_value_bias.npy  bert.encoder.layer.0.attention.self.value.bias  [128]  float32
+bert_encoder_layer_0_attention_output_dense_weight.npy  bert.encoder.layer.0.attention.output.dense.weight  [128, 128]  float32
+bert_encoder_layer_0_attention_output_dense_bias.npy  bert.encoder.layer.0.attention.output.dense.bias  [128]  float32
+bert_encoder_layer_0_attention_output_LayerNorm_weight.npy  bert.encoder.layer.0.attention.output.LayerNorm.weight  [128]  float32
+bert_encoder_layer_0_attention_output_LayerNorm_bias.npy  bert.encoder.layer.0.attention.output.LayerNorm.bias  [128]  float32
+bert_encoder_layer_0_intermediate_dense_weight.npy  bert.encoder.layer.0.intermediate.dense.weight  [512, 128]  float32
+bert_encoder_layer_0_intermediate_dense_bias.npy  bert.encoder.layer.0.intermediate.dense.bias  [512]  float32
+bert_encoder_layer_0_output_dense_weight.npy  bert.encoder.layer.0.output.dense.weight  [128, 512]  float32
+bert_encoder_layer_0_output_dense_bias.npy  bert.encoder.layer.0.output.dense.bias  [128]  float32
+bert_encoder_layer_0_output_LayerNorm_weight.npy  bert.encoder.layer.0.output.LayerNorm.weight  [128]  float32
+bert_encoder_layer_0_output_LayerNorm_bias.npy  bert.encoder.layer.0.output.LayerNorm.bias  [128]  float32
+bert_encoder_layer_1_attention_self_query_weight.npy  bert.encoder.layer.1.attention.self.query.weight  [128, 128]  float32
+bert_encoder_layer_1_attention_self_query_bias.npy  bert.encoder.layer.1.attention.self.query.bias  [128]  float32
+bert_encoder_layer_1_attention_self_key_weight.npy  bert.encoder.layer.1.attention.self.key.weight  [128, 128]  float32
+bert_encoder_layer_1_attention_self_key_bias.npy  bert.encoder.layer.1.attention.self.key.bias  [128]  float32
+bert_encoder_layer_1_attention_self_value_weight.npy  bert.encoder.layer.1.attention.self.value.weight  [128, 128]  float32
+bert_encoder_layer_1_attention_self_value_bias.npy  bert.encoder.layer.1.attention.self.value.bias  [128]  float32
+bert_encoder_layer_1_attention_output_dense_weight.npy  bert.encoder.layer.1.attention.output.dense.weight  [128, 128]  float32
+bert_encoder_layer_1_attention_output_dense_bias.npy  bert.encoder.layer.1.attention.output.dense.bias  [128]  float32
+bert_encoder_layer_1_attention_output_LayerNorm_weight.npy  bert.encoder.layer.1.attention.output.LayerNorm.weight  [128]  float32
+bert_encoder_layer_1_attention_output_LayerNorm_bias.npy  bert.encoder.layer.1.attention.output.LayerNorm.bias  [128]  float32
+bert_encoder_layer_1_intermediate_dense_weight.npy  bert.encoder.layer.1.intermediate.dense.weight  [512, 128]  float32
+bert_encoder_layer_1_intermediate_dense_bias.npy  bert.encoder.layer.1.intermediate.dense.bias  [512]  float32
+bert_encoder_layer_1_output_dense_weight.npy  bert.encoder.layer.1.output.dense.weight  [128, 512]  float32
+bert_encoder_layer_1_output_dense_bias.npy  bert.encoder.layer.1.output.dense.bias  [128]  float32
+bert_encoder_layer_1_output_LayerNorm_weight.npy  bert.encoder.layer.1.output.LayerNorm.weight  [128]  float32
+bert_encoder_layer_1_output_LayerNorm_bias.npy  bert.encoder.layer.1.output.LayerNorm.bias  [128]  float32
+bert_pooler_dense_weight.npy  bert.pooler.dense.weight  [128, 128]  float32
+bert_pooler_dense_bias.npy  bert.pooler.dense.bias  [128]  float32
+classifier_weight.npy  classifier.weight  [2, 128]  float32
+classifier_bias.npy  classifier.bias  [2]  float32
