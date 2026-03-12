@@ -64,7 +64,7 @@ vpath %.c $(src_dir)
 		$(wildcard $(BENCH_COMMON)/*.c) $(wildcard $(BENCH_COMMON)/*.S) $(LIBS)
 
 %-linux: %.c $(src_dir)/images.h $(GEMMINI_HEADERS)
-	$(CC_LINUX) $(CFLAGS) $< $(LFLAGS) -o $@
+	$(CC_LINUX) $(CFLAGS) -static $< $(LFLAGS) -o $@
 
 %-pk: %.c $(GEMMINI_HEADERS)
 	$(CC_LINUX) $(CFLAGS_PK) $< $(LFLAGS) -o $@
