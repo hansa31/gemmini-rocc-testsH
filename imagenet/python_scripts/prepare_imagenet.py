@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Prepare ImageNet validation images for Gemmini MobileNetV1 inference.
-
-Reads ImageNet validation images, preprocesses them (resize, center-crop,
-quantize to int8), and writes a flat binary file + labels text file
-that mobilenet_v1.c can stream batch-by-batch.
+Prepare ImageNet validation images for Gemmini MobileNetV2 inference.
+Matches the preprocessing pipeline from Imagenet2gemmini.ipynb exactly:
+  1. cv2.resize(img, (224, 224))  — simple stretch, NO center crop
+  2. BGR -> RGB via cv2.cvtColor
+  3. np.clip((img.astype(np.int32) - 128), -128, 127).astype(np.int8)
 
 Output format:
   images.bin  — N images, each 224*224*3 int8 values (HWC, RGB), contiguous
@@ -22,57 +22,38 @@ Usage:
 
   If you already have a sorted label list (one int per line), use:
       --labels-file val_labels.txt --labels-format plain
+
+  To visualize first N preprocessed images:
+      --visualize 5
 """
 
 import argparse
 import os
-import struct
 import sys
 
+import cv2
 import numpy as np
 
-try:
-    from PIL import Image
-except ImportError:
-    print("Pillow is required: pip install Pillow")
-    sys.exit(1)
 
+# ---------- Preprocessing matching Imagenet2gemmini.ipynb exactly ----------
 
-# ---------- Preprocessing matching the original Gemmini quantization ----------
+def preprocess_image(img_path, input_size=224):
+    """Load an image, stretch-resize to 224x224, and quantize to int8.
 
-def preprocess_image(img_path, input_size=224, scale=1.0, zero_point=-128):
-    """Load an image, resize/center-crop to input_size, and quantize to int8.
-
-    The preprocessing mirrors the original Gemmini images.h quantization:
-      1. Resize shortest side to 256, bilinear interpolation
-      2. Center crop to 224x224
-      3. Convert to float [0, 255]
-      4. Apply quantization: int8_val = round(pixel * scale) + zero_point
-         Default: scale=1, zero_point=-128 maps [0,255] -> [-128,127]
-         This matches the signed int8 range seen in the original images.h.
+    Pipeline (matches Imagenet2gemmini.ipynb):
+      1. cv2.imread  (loads as BGR)
+      2. cv2.resize to (224, 224) — stretch, no crop, default INTER_LINEAR
+      3. cv2.cvtColor BGR -> RGB
+      4. np.clip((img.astype(np.int32) - 128), -128, 127).astype(np.int8)
     """
-    img = Image.open(img_path).convert("RGB")
+    img = cv2.imread(img_path)
+    if img is None:
+        raise ValueError(f"Failed to load image: {img_path}")
+    img = cv2.resize(img, (input_size, input_size))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    # Resize shortest side to 256
-    w, h = img.size
-    if w < h:
-        new_w = 256
-        new_h = int(256 * h / w)
-    else:
-        new_h = 256
-        new_w = int(256 * w / h)
-    img = img.resize((new_w, new_h), Image.BILINEAR)
-
-    # Center crop to input_size x input_size
-    w, h = img.size
-    left = (w - input_size) // 2
-    top = (h - input_size) // 2
-    img = img.crop((left, top, left + input_size, top + input_size))
-
-    # Convert to numpy float, then quantize
-    pixels = np.array(img, dtype=np.float32)  # shape (224, 224, 3), range [0, 255]
-    quantized = np.round(pixels * scale + zero_point).astype(np.int32)
-    quantized = np.clip(quantized, -128, 127).astype(np.int8)
+    # Quantize: uint8 - 128 -> int8
+    quantized = np.clip(img.astype(np.int32) - 128, -128, 127).astype(np.int8)
 
     return quantized  # shape (224, 224, 3), dtype int8
 
@@ -101,6 +82,31 @@ def parse_labels_file(labels_path, labels_format="imagenet"):
     return filenames, labels
 
 
+def visualize_preprocessed(image_paths, imagenet_dir, num_vis=5):
+    """Show first N preprocessed images (dequantized back to uint8 for display)."""
+    import matplotlib.pyplot as plt
+
+    n = min(num_vis, len(image_paths))
+    fig, axes = plt.subplots(1, n, figsize=(4 * n, 4))
+    if n == 1:
+        axes = [axes]
+
+    for i in range(n):
+        img_path = os.path.join(imagenet_dir, image_paths[i])
+        quantized = preprocess_image(img_path)
+        # Dequantize: int8 + 128 -> uint8 for display
+        display = np.clip(quantized.astype(np.int32) + 128, 0, 255).astype(np.uint8)
+        axes[i].imshow(display)
+        axes[i].set_title(image_paths[i], fontsize=8)
+        axes[i].axis("off")
+
+    plt.suptitle("Preprocessed images (dequantized for display)", fontsize=12)
+    plt.tight_layout()
+    plt.savefig(os.path.join(imagenet_dir, "..", "preprocessed_preview.png"), dpi=150)
+    print(f"Saved preview to preprocessed_preview.png")
+    plt.show()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Prepare ImageNet images for Gemmini")
     parser.add_argument("--imagenet-dir", required=True,
@@ -115,10 +121,8 @@ def main():
                         help="Output directory for images.bin and labels.txt")
     parser.add_argument("--output-prefix", default="imagenet_val",
                         help="Prefix for output files (default: imagenet_val)")
-    parser.add_argument("--scale", type=float, default=1.0,
-                        help="Quantization scale factor (default: 1.0)")
-    parser.add_argument("--zero-point", type=int, default=-128,
-                        help="Quantization zero point (default: -128, maps [0,255] to [-128,127])")
+    parser.add_argument("--visualize", type=int, default=0,
+                        help="Show first N preprocessed images (e.g. --visualize 5)")
     args = parser.parse_args()
 
     filenames, all_labels = parse_labels_file(args.labels_file, args.labels_format)
@@ -137,11 +141,13 @@ def main():
     else:
         image_files = filenames
 
+    # Visualize first N images if requested
+    if args.visualize > 0:
+        visualize_preprocessed(image_files, args.imagenet_dir, args.visualize)
+
     os.makedirs(args.output_dir, exist_ok=True)
     bin_path = os.path.join(args.output_dir, f"{args.output_prefix}_{num_images}.bin")
     lbl_path = os.path.join(args.output_dir, f"{args.output_prefix}_{num_images}_labels.txt")
-
-    image_size = 224 * 224 * 3  # bytes per image
 
     with open(bin_path, "wb") as bin_f, open(lbl_path, "w") as lbl_f:
         for i in range(num_images):
@@ -152,7 +158,7 @@ def main():
                 print(f"Warning: {img_path} not found, skipping")
                 continue
 
-            quantized = preprocess_image(img_path, scale=args.scale, zero_point=args.zero_point)
+            quantized = preprocess_image(img_path)
             assert quantized.shape == (224, 224, 3) and quantized.dtype == np.int8
 
             # Write raw int8 bytes (HWC layout, contiguous)
