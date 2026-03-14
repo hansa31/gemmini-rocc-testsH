@@ -1,6 +1,8 @@
 include $(abs_top_srcdir)/Makefrag
 
 tests = \
+	bert-tiny-sst2-fp \
+	bert-tiny-sst2 \
 	transformer \
 
 tests_baremetal = $(tests:=-baremetal)
@@ -27,8 +29,6 @@ CFLAGS := $(CFLAGS) \
 	-fno-builtin-printf \
 	-fno-tree-loop-distribute-patterns \
 	-march=rv64gc -Wa,-march=rv64gc \
-	-lm \
-	-lgcc \
 	-I$(abs_top_srcdir)/riscv-tests \
 	-I$(abs_top_srcdir)/riscv-tests/env \
 	-I$(abs_top_srcdir) \
@@ -55,13 +55,13 @@ vpath %.c $(src_dir)
 
 %-baremetal: %.c $(GEMMINI_HEADERS)
 	$(CC_BAREMETAL) $(CFLAGS_BAREMETAL) $< $(LFLAGS) -o $@ \
-		$(wildcard $(BENCH_COMMON)/*.c) $(wildcard $(BENCH_COMMON)/*.S) $(LIBS)
+		$(wildcard $(BENCH_COMMON)/*.c) $(wildcard $(BENCH_COMMON)/*.S) $(LIBS) -lm -lgcc
 
 %-linux: %.c $(GEMMINI_HEADERS)
-	$(CC_LINUX) $(CFLAGS) $< $(LFLAGS) -o $@
+	$(CC_LINUX) $(CFLAGS) -static $< $(LFLAGS) -o $@ -lm -lgcc
 
 %-pk: %.c $(GEMMINI_HEADERS)
-	$(CC_LINUX) $(CFLAGS_PK) $< $(LFLAGS) -o $@
+	$(CC_LINUX) $(CFLAGS_PK) $< $(LFLAGS) -o $@ -lm -lgcc
 
 run-baremetal: $(runs_baremetal)
 
