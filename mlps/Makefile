@@ -9,7 +9,12 @@ tests = \
 	mlp1_32 \
 	mlp2_32 \
 	mlp3_32 \
-	mlp4_32
+	mlp4_32 \
+	mlp_lenet300 \
+	mlp_bert_ffn \
+	mlp_gpt2_ffn \
+	mlp_dlrm_bottom \
+	mlp_dlrm_top
 
 tests_baremetal = $(tests:=-baremetal)
 runs_baremetal = $(addsuffix .run,$(tests_baremetal))
@@ -65,7 +70,7 @@ vpath %.c $(src_dir)
 		$(wildcard $(BENCH_COMMON)/*.c) $(wildcard $(BENCH_COMMON)/*.S) $(LIBS)
 
 %-linux: %.c $(GEMMINI_HEADERS)
-	$(CC_LINUX) $(CFLAGS) $< $(LFLAGS) -o $@
+	$(CC_LINUX) $(CFLAGS) -static $< $(LFLAGS) -o $@
 
 %-pk: %.c $(GEMMINI_HEADERS)
 	$(CC_LINUX) $(CFLAGS_PK) $< $(LFLAGS) -o $@
