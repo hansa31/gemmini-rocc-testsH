@@ -7,8 +7,8 @@
 #include "include/gemmini.h"
 #include "include/gemmini_nn.h"
 
-#include "mobilenet_params.h"
-#include "images.h"   // Reference test images for A/B comparison
+#include "mobilenet_cifar10_params_float.h"
+#include "cifar10_images.h"   // Reference test images (4 CIFAR-10 samples) for A/B comparison
 
 #include <time.h>
 #include <stdint.h>
@@ -17,15 +17,15 @@
     #define CLOCK_MONOTONIC CLOCK_REALTIME
 #endif
 
-#define TOP_K 10
+#define TOP_K 5
 
 // ---- Configuration: change these for your dataset ----
 #define NUM_IMAGES 10000
 #define BATCH_SIZE 4
-#define IMAGE_SIZE (224 * 224 * 3)
+#define IMAGE_SIZE (32 * 32 * 3)
 
-#define IMAGES_BIN_FILE "imagenet_val_10000.bin"
-#define LABELS_TXT_FILE "imagenet_val_10000_labels.txt"
+#define IMAGES_BIN_FILE "cifar10_test_10000.bin"
+#define LABELS_TXT_FILE "cifar10_test_10000_labels.txt"
 // ------------------------------------------------------
 
 static inline uint64_t get_time_ns(void) {
@@ -34,7 +34,7 @@ static inline uint64_t get_time_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-// Only one batch of images in memory at a time (~600 KB)
+// Only one batch of images in memory at a time (~12 KB for CIFAR-10)
 static elem_t batch_images[BATCH_SIZE * IMAGE_SIZE];
 
 int main (int argc, char * argv[]) {
@@ -90,13 +90,13 @@ int main (int argc, char * argv[]) {
         exit(1);
     }
 
-    printf("\n--- MobileNetV1 Streaming Inference ---\n");
+    printf("\n--- MobileNetV2 CIFAR-10 Streaming Inference (Float) ---\n");
     printf("NUM_IMAGES: %d, BATCH_SIZE: %d\n", NUM_IMAGES, BATCH_SIZE);
     printf("tiled_matmul_type: %s\n",
         tiled_matmul_type == CPU ? "CPU" : tiled_matmul_type == OS ? "OS" : "WS");
     printf("conv: %s, check: %s\n", conv ? "true" : "false", check ? "true" : "false");
 
-    // Load all labels (ints are tiny, ~200 KB for 50K)
+    // Load all labels (small: ~40 KB for 10K)
     int labels[NUM_IMAGES];
     FILE *fp_labels = fopen(LABELS_TXT_FILE, "r");
     if (!fp_labels) {
@@ -122,22 +122,20 @@ int main (int argc, char * argv[]) {
     int num_batches = NUM_IMAGES / BATCH_SIZE;
     int top1_correct = 0;
     int top5_correct = 0;
-    int top10_correct = 0;
 
     // Per-100-image window counters
     int window_top1 = 0;
     int window_top5 = 0;
-    int window_top10 = 0;
 
     setvbuf(stdout, NULL, _IONBF, 0);
 
-    // ===== A/B TEST: Run images.h first to establish baseline =====
-    printf("\n===== A/B TEST: Running images.h reference data =====\n");
+    // ===== A/B TEST: Run cifar10_images.h first to establish baseline =====
+    printf("\n===== A/B TEST: Running cifar10_images.h reference data =====\n");
     {
-        elem_t *current_images = (elem_t*)images;  // from images.h
+        elem_t *current_images = (elem_t*)images;  // from cifar10_images.h
         uint64_t start = get_time_ns();
 
-        // --- Run the full network with images.h data ---
+        // --- conv_1 ---
         if (!conv) {
             im2col(conv_1_params.batch_size, conv_1_params.in_channels,
                 conv_1_params.in_row_dim, conv_1_params.in_col_dim,
@@ -160,7 +158,7 @@ int main (int argc, char * argv[]) {
                 tiled_matmul_type);
         }
 
-        // Print images.h conv_1 stats
+        // Print conv_1 stats
         int c1_min = 127, c1_max = -128, c1_nz = 0;
         for (int r = 0; r < conv_1_params.I / 4; r++)
             for (int c = 0; c < conv_1_params.J; c++) {
@@ -172,7 +170,7 @@ int main (int argc, char * argv[]) {
         printf("  [REF] conv_1_out: min=%d, max=%d, nonzero=%d/%d\n",
                c1_min, c1_max, c1_nz, (conv_1_params.I/4)*conv_1_params.J);
 
-        // Run remaining layers (same as main loop)
+        // --- Run remaining layers ---
         tiled_conv_dw_auto(conv_dw_2_params.batch_size, conv_dw_2_params.in_row_dim, conv_dw_2_params.in_col_dim, conv_dw_2_params.in_channels, conv_dw_2_params.out_row_dim, conv_dw_2_params.out_col_dim, conv_dw_2_params.stride, conv_dw_2_params.padding, conv_dw_2_params.kernel_size, (elem_t*)conv_1_out, (elem_t*)conv_dw_2_w, (acc_t*)conv_dw_2_b, (elem_t*)conv_dw_2_out, RELU, conv_dw_2_params.output_scale, conv_dw_2_params.pool_size, 0, conv_dw_2_params.pool_padding, tiled_matmul_type);
         tiled_matmul_nn_auto(conv_3_params.I, conv_3_params.J, conv_3_params.K, conv_dw_2_out, conv_3_w, conv_3_b, conv_3_out, NO_ACTIVATION, conv_3_params.output_scale, true, tiled_matmul_type, check, "conv_3");
         tiled_matmul_nn_auto(conv_4_params.I, conv_4_params.J, conv_4_params.K, conv_3_out, conv_4_w, conv_4_b, conv_4_out, RELU, conv_4_params.output_scale, true, tiled_matmul_type, check, "conv_4");
@@ -235,7 +233,7 @@ int main (int argc, char * argv[]) {
         tiled_matmul_nn_auto(conv_51_params.I, conv_51_params.J, conv_51_params.K, conv_dw_50_out, conv_51_w, conv_51_b, conv_51_out, NO_ACTIVATION, conv_51_params.output_scale, true, tiled_matmul_type, check, "conv_51");
         tiled_matmul_nn_auto(conv_52_params.I, conv_52_params.J, conv_52_params.K, conv_51_out, conv_52_w, conv_52_b, conv_52_out, RELU, conv_52_params.output_scale, true, tiled_matmul_type, check, "conv_52");
 
-        // Print images.h conv_52 and fc_53 stats
+        // Global average pooling for reference run
         static elem_t ref_average[1280][4] row_align(1);
         for (int batch = 0; batch < conv_52_params.batch_size; batch++)
             for (int channel = 0; channel < conv_52_params.out_channels; channel++) {
@@ -249,53 +247,26 @@ int main (int argc, char * argv[]) {
                 ref_average[channel][batch] = (sum + count/2) / count;
             }
 
-        int c52_min = 127, c52_max = -128, c52_nz = 0;
-        for (int r = 0; r < conv_52_params.I / 4; r++)
-            for (int c = 0; c < conv_52_params.J; c++) {
-                int v = conv_52_out[r][c];
-                if (v < c52_min) c52_min = v;
-                if (v > c52_max) c52_max = v;
-                if (v != 0) c52_nz++;
-            }
-        printf("  [REF] conv_52_out: min=%d, max=%d, nonzero=%d/%d\n",
-               c52_min, c52_max, c52_nz, (conv_52_params.I/4)*conv_52_params.J);
-
-        int avg_min = 127, avg_max = -128, avg_nz = 0;
-        for (int c = 0; c < 1280; c++) {
-            int v = ref_average[c][0];
-            if (v < avg_min) avg_min = v;
-            if (v > avg_max) avg_max = v;
-            if (v != 0) avg_nz++;
-        }
-        printf("  [REF] average: min=%d, max=%d, nonzero=%d/1280\n", avg_min, avg_max, avg_nz);
-
         tiled_matmul_nn_auto(fc_53_params.I, fc_53_params.J, fc_53_params.K,
             fc_53_w, ref_average, fc_53_b, fc_53_out,
             NO_ACTIVATION, fc_53_params.output_scale, false,
             tiled_matmul_type, check, "fc_53");
 
-        int fc_min = 127, fc_max = -128;
-        for (int i = 0; i < 1000; i++) {
-            int v = fc_53_out[i][0];
-            if (v < fc_min) fc_min = v;
-            if (v > fc_max) fc_max = v;
-        }
-        printf("  [REF] fc_53_out: min=%d, max=%d\n", fc_min, fc_max);
-
-        // Print predictions for images.h
+        // Print predictions vs expected {3, 8, 8, 0}
+        const char *cifar10_classes[] = {"airplane","automobile","bird","cat","deer","dog","frog","horse","ship","truck"};
         for (int batch = 0; batch < 4; batch++) {
             int max_idx = 0;
             elem_t max_val = fc_53_out[0][batch];
-            for (int i = 1; i < 1000; i++) {
+            for (int i = 1; i < fc_53_params.out_features; i++) {
                 if (fc_53_out[i][batch] > max_val) {
                     max_val = fc_53_out[i][batch];
                     max_idx = i;
                 }
             }
-            printf("  [REF] Image %d: pred=%d (score=%d)\n", batch, max_idx, max_val);
+            printf("  [REF] Image %d: pred=%d (%s), score=%d\n",
+                   batch, max_idx, cifar10_classes[max_idx], (int)max_val);
         }
-        int ref_correct[] = {75, 900, 125, 897};
-        printf("  [REF] Expected: {75, 900, 125, 897}\n");
+        printf("  [REF] Expected labels: {3, 8, 8, 0} (cat, ship, ship, airplane)\n");
         uint64_t ref_end = get_time_ns();
         printf("  [REF] Time: %llu ns\n", (unsigned long long)(ref_end - start));
     }
@@ -306,7 +277,7 @@ int main (int argc, char * argv[]) {
         // Stream one batch from disk
         size_t items_read = fread(batch_images, sizeof(elem_t), BATCH_SIZE * IMAGE_SIZE, fp_images);
         if (items_read != (size_t)(BATCH_SIZE * IMAGE_SIZE)) {
-            printf("Warning: short read at batch %d (got %zu of %d bytes), stopping\n",
+            printf("Warning: short read at batch %d (got %zu of %d), stopping\n",
                    batch_idx, items_read, BATCH_SIZE * IMAGE_SIZE);
             break;
         }
@@ -321,7 +292,6 @@ int main (int argc, char * argv[]) {
                 conv_1_params.in_row_dim, conv_1_params.in_col_dim,
                 conv_1_params.I, conv_1_params.K,
                 current_images, conv_1_in, &conv_1_params);
-
             tiled_matmul_nn_auto(conv_1_params.I, conv_1_params.J, conv_1_params.K,
                 conv_1_in, conv_1_w, conv_1_b, conv_1_out,
                 RELU, conv_1_params.output_scale, true,
@@ -333,12 +303,9 @@ int main (int argc, char * argv[]) {
                 conv_1_params.out_channels, conv_1_params.out_row_dim, conv_1_params.out_col_dim,
                 conv_1_params.stride, 1, 1, conv_1_params.padding, conv_1_params.kernel_size,
                 false, false, false, false, false,
-
                 (elem_t*)current_images, (elem_t*)conv_1_w, (acc_t*)conv_1_b, (elem_t*)conv_1_out,
-
                 RELU, conv_1_params.output_scale,
                 conv_1_params.pool_size, 0, conv_1_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -355,12 +322,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_2_params.in_channels,
                 conv_dw_2_params.out_row_dim, conv_dw_2_params.out_col_dim,
                 conv_dw_2_params.stride, conv_dw_2_params.padding, conv_dw_2_params.kernel_size,
-
                 (elem_t*)conv_1_out, (elem_t*)conv_dw_2_w, (acc_t*)conv_dw_2_b, (elem_t*)conv_dw_2_out,
-
                 RELU, conv_dw_2_params.output_scale,
                 conv_dw_2_params.pool_size, 0, conv_dw_2_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -389,12 +353,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_5_params.in_channels,
                 conv_dw_5_params.out_row_dim, conv_dw_5_params.out_col_dim,
                 conv_dw_5_params.stride, conv_dw_5_params.padding, conv_dw_5_params.kernel_size,
-
                 (elem_t*)conv_4_out, (elem_t*)conv_dw_5_w, (acc_t*)conv_dw_5_b, (elem_t*)conv_dw_5_out,
-
                 RELU, conv_dw_5_params.output_scale,
                 conv_dw_5_params.pool_size, 0, conv_dw_5_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -423,12 +384,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_8_params.in_channels,
                 conv_dw_8_params.out_row_dim, conv_dw_8_params.out_col_dim,
                 conv_dw_8_params.stride, conv_dw_8_params.padding, conv_dw_8_params.kernel_size,
-
                 (elem_t*)conv_7_out, (elem_t*)conv_dw_8_w, (acc_t*)conv_dw_8_b, (elem_t*)conv_dw_8_out,
-
                 RELU, conv_dw_8_params.output_scale,
                 conv_dw_8_params.pool_size, 0, conv_dw_8_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -440,13 +398,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_6 + conv_9) ======================
         tiled_resadd_auto(conv_9_params.I, conv_9_params.J,
-            conv_9_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_6_out,
-            conv_9_out,
-            conv_9_out,
-            false,
+            conv_9_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_6_out, conv_9_out, conv_9_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_10 ======================
@@ -468,12 +421,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_11_params.in_channels,
                 conv_dw_11_params.out_row_dim, conv_dw_11_params.out_col_dim,
                 conv_dw_11_params.stride, conv_dw_11_params.padding, conv_dw_11_params.kernel_size,
-
                 (elem_t*)conv_10_out, (elem_t*)conv_dw_11_w, (acc_t*)conv_dw_11_b, (elem_t*)conv_dw_11_out,
-
                 RELU, conv_dw_11_params.output_scale,
                 conv_dw_11_params.pool_size, 0, conv_dw_11_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -502,12 +452,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_14_params.in_channels,
                 conv_dw_14_params.out_row_dim, conv_dw_14_params.out_col_dim,
                 conv_dw_14_params.stride, conv_dw_14_params.padding, conv_dw_14_params.kernel_size,
-
                 (elem_t*)conv_13_out, (elem_t*)conv_dw_14_w, (acc_t*)conv_dw_14_b, (elem_t*)conv_dw_14_out,
-
                 RELU, conv_dw_14_params.output_scale,
                 conv_dw_14_params.pool_size, 0, conv_dw_14_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -519,13 +466,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_12 + conv_15) ======================
         tiled_resadd_auto(conv_15_params.I, conv_15_params.J,
-            conv_15_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_12_out,
-            conv_15_out,
-            conv_15_out,
-            false,
+            conv_15_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_12_out, conv_15_out, conv_15_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_16 ======================
@@ -547,12 +489,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_17_params.in_channels,
                 conv_dw_17_params.out_row_dim, conv_dw_17_params.out_col_dim,
                 conv_dw_17_params.stride, conv_dw_17_params.padding, conv_dw_17_params.kernel_size,
-
                 (elem_t*)conv_16_out, (elem_t*)conv_dw_17_w, (acc_t*)conv_dw_17_b, (elem_t*)conv_dw_17_out,
-
                 RELU, conv_dw_17_params.output_scale,
                 conv_dw_17_params.pool_size, 0, conv_dw_17_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -564,13 +503,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_15 + conv_18) ======================
         tiled_resadd_auto(conv_18_params.I, conv_18_params.J,
-            conv_18_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_15_out,
-            conv_18_out,
-            conv_18_out,
-            false,
+            conv_18_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_15_out, conv_18_out, conv_18_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_19 ======================
@@ -592,12 +526,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_20_params.in_channels,
                 conv_dw_20_params.out_row_dim, conv_dw_20_params.out_col_dim,
                 conv_dw_20_params.stride, conv_dw_20_params.padding, conv_dw_20_params.kernel_size,
-
                 (elem_t*)conv_19_out, (elem_t*)conv_dw_20_w, (acc_t*)conv_dw_20_b, (elem_t*)conv_dw_20_out,
-
                 RELU, conv_dw_20_params.output_scale,
                 conv_dw_20_params.pool_size, 0, conv_dw_20_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -626,12 +557,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_23_params.in_channels,
                 conv_dw_23_params.out_row_dim, conv_dw_23_params.out_col_dim,
                 conv_dw_23_params.stride, conv_dw_23_params.padding, conv_dw_23_params.kernel_size,
-
                 (elem_t*)conv_22_out, (elem_t*)conv_dw_23_w, (acc_t*)conv_dw_23_b, (elem_t*)conv_dw_23_out,
-
                 RELU, conv_dw_23_params.output_scale,
                 conv_dw_23_params.pool_size, 0, conv_dw_23_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -643,13 +571,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_21 + conv_24) ======================
         tiled_resadd_auto(conv_24_params.I, conv_24_params.J,
-            conv_24_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_21_out,
-            conv_24_out,
-            conv_24_out,
-            false,
+            conv_24_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_21_out, conv_24_out, conv_24_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_25 ======================
@@ -671,12 +594,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_26_params.in_channels,
                 conv_dw_26_params.out_row_dim, conv_dw_26_params.out_col_dim,
                 conv_dw_26_params.stride, conv_dw_26_params.padding, conv_dw_26_params.kernel_size,
-
                 (elem_t*)conv_25_out, (elem_t*)conv_dw_26_w, (acc_t*)conv_dw_26_b, (elem_t*)conv_dw_26_out,
-
                 RELU, conv_dw_26_params.output_scale,
                 conv_dw_26_params.pool_size, 0, conv_dw_26_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -688,13 +608,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_24 + conv_27) ======================
         tiled_resadd_auto(conv_27_params.I, conv_27_params.J,
-            conv_27_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_24_out,
-            conv_27_out,
-            conv_27_out,
-            false,
+            conv_27_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_24_out, conv_27_out, conv_27_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_28 ======================
@@ -716,12 +631,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_29_params.in_channels,
                 conv_dw_29_params.out_row_dim, conv_dw_29_params.out_col_dim,
                 conv_dw_29_params.stride, conv_dw_29_params.padding, conv_dw_29_params.kernel_size,
-
                 (elem_t*)conv_28_out, (elem_t*)conv_dw_29_w, (acc_t*)conv_dw_29_b, (elem_t*)conv_dw_29_out,
-
                 RELU, conv_dw_29_params.output_scale,
                 conv_dw_29_params.pool_size, 0, conv_dw_29_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -733,13 +645,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_27 + conv_30) ======================
         tiled_resadd_auto(conv_30_params.I, conv_30_params.J,
-            conv_30_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_27_out,
-            conv_30_out,
-            conv_30_out,
-            false,
+            conv_30_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_27_out, conv_30_out, conv_30_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_31 ======================
@@ -761,12 +668,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_32_params.in_channels,
                 conv_dw_32_params.out_row_dim, conv_dw_32_params.out_col_dim,
                 conv_dw_32_params.stride, conv_dw_32_params.padding, conv_dw_32_params.kernel_size,
-
                 (elem_t*)conv_31_out, (elem_t*)conv_dw_32_w, (acc_t*)conv_dw_32_b, (elem_t*)conv_dw_32_out,
-
                 RELU, conv_dw_32_params.output_scale,
                 conv_dw_32_params.pool_size, 0, conv_dw_32_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -795,12 +699,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_35_params.in_channels,
                 conv_dw_35_params.out_row_dim, conv_dw_35_params.out_col_dim,
                 conv_dw_35_params.stride, conv_dw_35_params.padding, conv_dw_35_params.kernel_size,
-
                 (elem_t*)conv_34_out, (elem_t*)conv_dw_35_w, (acc_t*)conv_dw_35_b, (elem_t*)conv_dw_35_out,
-
                 RELU, conv_dw_35_params.output_scale,
                 conv_dw_35_params.pool_size, 0, conv_dw_35_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -812,13 +713,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_33 + conv_36) ======================
         tiled_resadd_auto(conv_36_params.I, conv_36_params.J,
-            conv_36_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_33_out,
-            conv_36_out,
-            conv_36_out,
-            false,
+            conv_36_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_33_out, conv_36_out, conv_36_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_37 ======================
@@ -840,12 +736,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_38_params.in_channels,
                 conv_dw_38_params.out_row_dim, conv_dw_38_params.out_col_dim,
                 conv_dw_38_params.stride, conv_dw_38_params.padding, conv_dw_38_params.kernel_size,
-
                 (elem_t*)conv_37_out, (elem_t*)conv_dw_38_w, (acc_t*)conv_dw_38_b, (elem_t*)conv_dw_38_out,
-
                 RELU, conv_dw_38_params.output_scale,
                 conv_dw_38_params.pool_size, 0, conv_dw_38_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -857,13 +750,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_36 + conv_39) ======================
         tiled_resadd_auto(conv_39_params.I, conv_39_params.J,
-            conv_39_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_36_out,
-            conv_39_out,
-            conv_39_out,
-            false,
+            conv_39_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_36_out, conv_39_out, conv_39_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_40 ======================
@@ -885,12 +773,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_41_params.in_channels,
                 conv_dw_41_params.out_row_dim, conv_dw_41_params.out_col_dim,
                 conv_dw_41_params.stride, conv_dw_41_params.padding, conv_dw_41_params.kernel_size,
-
                 (elem_t*)conv_40_out, (elem_t*)conv_dw_41_w, (acc_t*)conv_dw_41_b, (elem_t*)conv_dw_41_out,
-
                 RELU, conv_dw_41_params.output_scale,
                 conv_dw_41_params.pool_size, 0, conv_dw_41_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -919,12 +804,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_44_params.in_channels,
                 conv_dw_44_params.out_row_dim, conv_dw_44_params.out_col_dim,
                 conv_dw_44_params.stride, conv_dw_44_params.padding, conv_dw_44_params.kernel_size,
-
                 (elem_t*)conv_43_out, (elem_t*)conv_dw_44_w, (acc_t*)conv_dw_44_b, (elem_t*)conv_dw_44_out,
-
                 RELU, conv_dw_44_params.output_scale,
                 conv_dw_44_params.pool_size, 0, conv_dw_44_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -936,13 +818,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_42 + conv_45) ======================
         tiled_resadd_auto(conv_45_params.I, conv_45_params.J,
-            conv_45_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_42_out,
-            conv_45_out,
-            conv_45_out,
-            false,
+            conv_45_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_42_out, conv_45_out, conv_45_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_46 ======================
@@ -964,12 +841,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_47_params.in_channels,
                 conv_dw_47_params.out_row_dim, conv_dw_47_params.out_col_dim,
                 conv_dw_47_params.stride, conv_dw_47_params.padding, conv_dw_47_params.kernel_size,
-
                 (elem_t*)conv_46_out, (elem_t*)conv_dw_47_w, (acc_t*)conv_dw_47_b, (elem_t*)conv_dw_47_out,
-
                 RELU, conv_dw_47_params.output_scale,
                 conv_dw_47_params.pool_size, 0, conv_dw_47_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -981,13 +855,8 @@ int main (int argc, char * argv[]) {
 
         // ====================== res_add (conv_45 + conv_48) ======================
         tiled_resadd_auto(conv_48_params.I, conv_48_params.J,
-            conv_48_params.res_scale,
-            MVIN_SCALE_IDENTITY,
-            ACC_SCALE_IDENTITY,
-            conv_45_out,
-            conv_48_out,
-            conv_48_out,
-            false,
+            conv_48_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+            conv_45_out, conv_48_out, conv_48_out, false,
             tiled_matmul_type == CPU ? CPU : WS);
 
         // ====================== conv_49 ======================
@@ -1009,12 +878,9 @@ int main (int argc, char * argv[]) {
                 conv_dw_50_params.in_channels,
                 conv_dw_50_params.out_row_dim, conv_dw_50_params.out_col_dim,
                 conv_dw_50_params.stride, conv_dw_50_params.padding, conv_dw_50_params.kernel_size,
-
                 (elem_t*)conv_49_out, (elem_t*)conv_dw_50_w, (acc_t*)conv_dw_50_b, (elem_t*)conv_dw_50_out,
-
                 RELU, conv_dw_50_params.output_scale,
                 conv_dw_50_params.pool_size, 0, conv_dw_50_params.pool_padding,
-
                 tiled_matmul_type);
         }
 
@@ -1058,67 +924,6 @@ int main (int argc, char * argv[]) {
         printf("Batch %d/%d  Time: %llu ns\n", batch_idx + 1, num_batches,
                (unsigned long long)(end - start));
 
-        // ====================== Activation diagnostics (first batch only) ======================
-        if (batch_idx == 0) {
-            // Input pixel stats (batch 0 only)
-            int in_min = 127, in_max = -128;
-            long in_sum = 0;
-            for (int p = 0; p < IMAGE_SIZE; p++) {
-                int v = current_images[p];
-                if (v < in_min) in_min = v;
-                if (v > in_max) in_max = v;
-                in_sum += v;
-            }
-            printf("  [DIAG] Input pixels (img 0): min=%d, max=%d, mean=%.1f\n",
-                   in_min, in_max, (float)in_sum / IMAGE_SIZE);
-
-            // conv_1 output stats
-            int c1_min = 127, c1_max = -128, c1_nonzero = 0;
-            for (int r = 0; r < conv_1_params.I / 4; r++) {
-                for (int c = 0; c < conv_1_params.J; c++) {
-                    int v = conv_1_out[r][c];
-                    if (v < c1_min) c1_min = v;
-                    if (v > c1_max) c1_max = v;
-                    if (v != 0) c1_nonzero++;
-                }
-            }
-            printf("  [DIAG] conv_1_out (img 0): min=%d, max=%d, nonzero=%d/%d\n",
-                   c1_min, c1_max, c1_nonzero, (conv_1_params.I / 4) * conv_1_params.J);
-
-            // conv_52 output stats
-            int c52_min = 127, c52_max = -128, c52_nonzero = 0;
-            for (int r = 0; r < conv_52_params.I / 4; r++) {
-                for (int c = 0; c < conv_52_params.J; c++) {
-                    int v = conv_52_out[r][c];
-                    if (v < c52_min) c52_min = v;
-                    if (v > c52_max) c52_max = v;
-                    if (v != 0) c52_nonzero++;
-                }
-            }
-            printf("  [DIAG] conv_52_out (img 0): min=%d, max=%d, nonzero=%d/%d\n",
-                   c52_min, c52_max, c52_nonzero, (conv_52_params.I / 4) * conv_52_params.J);
-
-            // average stats
-            int avg_min = 127, avg_max = -128, avg_nonzero = 0;
-            for (int c = 0; c < 1280; c++) {
-                int v = average[c][0];
-                if (v < avg_min) avg_min = v;
-                if (v > avg_max) avg_max = v;
-                if (v != 0) avg_nonzero++;
-            }
-            printf("  [DIAG] average (img 0): min=%d, max=%d, nonzero=%d/1280\n",
-                   avg_min, avg_max, avg_nonzero);
-
-            // fc_53 output stats
-            int fc_min = 127, fc_max = -128;
-            for (int i = 0; i < 1000; i++) {
-                int v = fc_53_out[i][0];
-                if (v < fc_min) fc_min = v;
-                if (v > fc_max) fc_max = v;
-            }
-            printf("  [DIAG] fc_53_out (img 0): min=%d, max=%d\n", fc_min, fc_max);
-        }
-
         // ====================== Top-K accuracy ======================
         for (int batch = 0; batch < BATCH_SIZE; batch++) {
             int label = labels[batch_idx * BATCH_SIZE + batch];
@@ -1149,41 +954,34 @@ int main (int argc, char * argv[]) {
             for (int k = 0; k < 5; k++) {
                 if (top_indices[k] == label) { top5_correct++; window_top5++; break; }
             }
-            for (int k = 0; k < 10; k++) {
-                if (top_indices[k] == label) { top10_correct++; window_top10++; break; }
-            }
 
-            // Debug: print top-10 predictions for first 2 batches (8 images)
+            // Debug: print predictions for first 2 batches (8 images)
             if (batch_idx < 2) {
                 int img_idx = batch_idx * BATCH_SIZE + batch;
                 printf("\n  Image %d (true label=%d):\n", img_idx, label);
-                printf("    Top-10 predictions:\n");
+                printf("    Top-%d predictions:\n", TOP_K);
                 for (int k = 0; k < TOP_K; k++) {
-                    printf("      %2d. class %4d  (score: %.1f)%s\n",
+                    printf("      %d. class %d  (score: %.1f)%s\n",
                            k + 1, top_indices[k], top_scores[k],
                            top_indices[k] == label ? "  <-- CORRECT" : "");
                 }
             }
         }
 
-        // Progress every 100 images (= 25 batches)
+        // Progress every 100 images (= 25 batches for BATCH_SIZE=4)
         int imgs_done = (batch_idx + 1) * BATCH_SIZE;
         if (imgs_done % 100 == 0) {
             int window_start = imgs_done - 100 + 1;
-            printf("  [Images %d-%d] Window Top-1: %d/100 (%.1f%%), Top-5: %d/100 (%.1f%%), Top-10: %d/100 (%.1f%%)\n",
+            printf("  [Images %d-%d] Window Top-1: %d/100 (%.1f%%), Top-5: %d/100 (%.1f%%)\n",
                    window_start, imgs_done,
                    window_top1, 100.0f * window_top1 / 100,
-                   window_top5, 100.0f * window_top5 / 100,
-                   window_top10, 100.0f * window_top10 / 100);
-            printf("  [Cumulative %d/%d] Top-1: %.2f%%, Top-5: %.2f%%, Top-10: %.2f%%\n",
+                   window_top5, 100.0f * window_top5 / 100);
+            printf("  [Cumulative %d/%d] Top-1: %.2f%%, Top-5: %.2f%%\n",
                    imgs_done, num_batches * BATCH_SIZE,
                    100.0f * top1_correct / imgs_done,
-                   100.0f * top5_correct / imgs_done,
-                   100.0f * top10_correct / imgs_done);
-            // Reset window counters
+                   100.0f * top5_correct / imgs_done);
             window_top1 = 0;
             window_top5 = 0;
-            window_top10 = 0;
         }
     }
 
@@ -1195,8 +993,6 @@ int main (int argc, char * argv[]) {
            100.0f * top1_correct / total_images);
     printf("Top-5  correct: %d / %d = %.2f%%\n", top5_correct, total_images,
            100.0f * top5_correct / total_images);
-    printf("Top-10 correct: %d / %d = %.2f%%\n", top10_correct, total_images,
-           100.0f * top10_correct / total_images);
 
     exit(0);
 }

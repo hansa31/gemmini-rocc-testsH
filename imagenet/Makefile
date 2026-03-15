@@ -5,8 +5,13 @@ tests = \
 	mobilenet_test_bin_time \
 	mobilenet_test_time_fp16 \
 	mobilenet_v1 \
+	mobilenet_v1_float \
 	resnet50 \
+	resnet50_float \
+	resnet50_v1_float \
 	mobilenet \
+	mobilenet_cifar10_stream \
+	resnet50_cifar10_stream \
 	# alexnet \
 
 tests_baremetal = $(tests:=-baremetal)

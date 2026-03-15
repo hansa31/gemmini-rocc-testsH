@@ -150,11 +150,14 @@ def compute_buffers(conv_params):
 
 def build_layer_mapping():
     mapping = []
-    mapping.append(("conv_1", "mobilenet_v2.conv_stem", "conv"))
-    mapping.append(("conv_dw_2", "mobilenet_v2.layer.0.conv_3x3", "dw"))
-    mapping.append(("conv_3", "mobilenet_v2.layer.0.reduce_1x1", "conv"))
+    # 1) Initial conv stem — 3 sub-layers inside mobilenet_v2.conv_stem
+    mapping.append(("conv_1",    "mobilenet_v2.conv_stem.first_conv", "conv"))
+    mapping.append(("conv_dw_2", "mobilenet_v2.conv_stem.conv_3x3",   "dw"))
+    mapping.append(("conv_3",    "mobilenet_v2.conv_stem.reduce_1x1", "conv"))
+    # 2) Inverted residual blocks
+    # layer.0..15 → gemmini conv_4..conv_51 (each block: expand + dw + project)
     gemmini_idx = 4
-    for hf_layer_idx in range(1, 17):
+    for hf_layer_idx in range(0, 16):
         prefix = f"mobilenet_v2.layer.{hf_layer_idx}"
         mapping.append((f"conv_{gemmini_idx}", f"{prefix}.expand_1x1", "conv"))
         gemmini_idx += 1
@@ -226,8 +229,8 @@ def get_conv_bn_params(state_dict, prefix):
 
 def extract_layer(state_dict, gemmini_name, hf_prefix, layer_type):
     if layer_type == "fc":
-        fc_w = state_dict["classifier.1.weight"].numpy()   # [10, 1280]
-        fc_b = state_dict["classifier.1.bias"].numpy()      # [10]
+        fc_w = state_dict["classifier.weight"].numpy()   # [10, 1280]
+        fc_b = state_dict["classifier.bias"].numpy()      # [10]
         bias_2d = np.tile(fc_b.reshape(-1, 1), (1, BATCH_SIZE))
         return fc_w, bias_2d
 

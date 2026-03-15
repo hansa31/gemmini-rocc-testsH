@@ -7,7 +7,7 @@
 #include "include/gemmini.h"
 #include "include/gemmini_nn.h"
 
-#include "mobilenet_params.h"
+#include "mobilenet_params_float.h"
 #include "images.h"   // Reference test images for A/B comparison
 
 #include <time.h>
@@ -20,12 +20,12 @@
 #define TOP_K 10
 
 // ---- Configuration: change these for your dataset ----
-#define NUM_IMAGES 10000
+#define NUM_IMAGES 50000
 #define BATCH_SIZE 4
 #define IMAGE_SIZE (224 * 224 * 3)
 
-#define IMAGES_BIN_FILE "imagenet_val_10000.bin"
-#define LABELS_TXT_FILE "imagenet_val_10000_labels.txt"
+#define IMAGES_BIN_FILE "imagenet_val_50000.bin"
+#define LABELS_TXT_FILE "imagenet_val_50000_labels.txt"
 // ------------------------------------------------------
 
 static inline uint64_t get_time_ns(void) {
@@ -90,7 +90,7 @@ int main (int argc, char * argv[]) {
         exit(1);
     }
 
-    printf("\n--- MobileNetV1 Streaming Inference ---\n");
+    printf("\n--- MobileNetV1 Float Streaming Inference ---\n");
     printf("NUM_IMAGES: %d, BATCH_SIZE: %d\n", NUM_IMAGES, BATCH_SIZE);
     printf("tiled_matmul_type: %s\n",
         tiled_matmul_type == CPU ? "CPU" : tiled_matmul_type == OS ? "OS" : "WS");

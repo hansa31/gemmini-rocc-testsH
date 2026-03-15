@@ -150,11 +150,14 @@ def compute_buffers(conv_params):
 
 def build_layer_mapping():
     mapping = []
-    mapping.append(("conv_1", "mobilenet_v2.conv_stem", "conv"))
-    mapping.append(("conv_dw_2", "mobilenet_v2.layer.0.conv_3x3", "dw"))
-    mapping.append(("conv_3", "mobilenet_v2.layer.0.reduce_1x1", "conv"))
+    # 1) Initial conv stem — 3 sub-layers inside mobilenet_v2.conv_stem
+    mapping.append(("conv_1",    "mobilenet_v2.conv_stem.first_conv", "conv"))
+    mapping.append(("conv_dw_2", "mobilenet_v2.conv_stem.conv_3x3",   "dw"))
+    mapping.append(("conv_3",    "mobilenet_v2.conv_stem.reduce_1x1", "conv"))
+    # 2) Inverted residual blocks
+    # layer.0..15 → gemmini conv_4..conv_51 (each block: expand + dw + project)
     gemmini_idx = 4
-    for hf_layer_idx in range(1, 17):
+    for hf_layer_idx in range(0, 16):
         prefix = f"mobilenet_v2.layer.{hf_layer_idx}"
         mapping.append((f"conv_{gemmini_idx}", f"{prefix}.expand_1x1", "conv"))
         gemmini_idx += 1
@@ -473,7 +476,7 @@ def main():
     model.eval()
     state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
-    classifier_w = state_dict["classifier.1.weight"]
+    classifier_w = state_dict["classifier.weight"]
     actual_classes = classifier_w.shape[0]
     print(f"Model has {actual_classes} output classes")
     assert actual_classes == NUM_CLASSES, \
@@ -506,8 +509,8 @@ def main():
     for gemmini_name, hf_prefix, layer_type in mapping:
         if layer_type == "fc":
             # --- FC layer ---
-            fc_w_float = state_dict["classifier.1.weight"].numpy()
-            fc_b_float = state_dict["classifier.1.bias"].numpy()
+            fc_w_float = state_dict["classifier.weight"].numpy()
+            fc_b_float = state_dict["classifier.bias"].numpy()
 
             w_int, w_scale = quantize_weight_int8(fc_w_float)
             combined_scale = w_scale * x_scale
