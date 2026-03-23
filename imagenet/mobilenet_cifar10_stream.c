@@ -8,7 +8,7 @@
 #include "include/gemmini_nn.h"
 
 #include "mobilenet_cifar10_params.h"
-#include "cifar10_images.h"   // Reference test images (4 CIFAR-10 samples) for A/B comparison
+#include "cifar10_images_224.h"   // Reference test images (4 CIFAR-10 samples, 224x224) for A/B comparison
 
 #include <time.h>
 #include <stdint.h>
@@ -22,9 +22,9 @@
 // ---- Configuration: change these for your dataset ----
 #define NUM_IMAGES 10000
 #define BATCH_SIZE 4
-#define IMAGE_SIZE (32 * 32 * 3)
+#define IMAGE_SIZE (224 * 224 * 3)
 
-#define IMAGES_BIN_FILE "cifar10_test_10000.bin"
+#define IMAGES_BIN_FILE "cifar10_test_10000_224x224.bin"
 #define LABELS_TXT_FILE "cifar10_test_10000_labels.txt"
 // ------------------------------------------------------
 

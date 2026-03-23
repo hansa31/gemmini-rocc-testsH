@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #ifndef BAREMETAL
 #include <sys/mman.h>
+#include <time.h>
 #endif
 
 #include "include/gemmini.h"
@@ -52,6 +53,11 @@ int main (int argc, char * argv[]) {
     uint64_t cycles[4] = {0};
     uint64_t start, end;
 
+#ifndef BAREMETAL
+    struct timespec _wall_start, _wall_end;
+    clock_gettime(CLOCK_MONOTONIC, &_wall_start);
+#endif
+
     /* matmul number: 0 */
     start = read_cycles();
 
@@ -96,12 +102,23 @@ int main (int argc, char * argv[]) {
     end = read_cycles();
     cycles[3] = end-start;
 
+#ifndef BAREMETAL
+    clock_gettime(CLOCK_MONOTONIC, &_wall_end);
+#endif
+
     uint64_t overall_cycles = 0;
     for(int cyc = 0; cyc < 4 ; cyc++){
         overall_cycles += cycles[cyc];
         printf("Cycles taken in layer %d: %llu\n", cyc, cycles[cyc]);
     }
     printf("Overall cycles taken: %llu\n", overall_cycles);
+#ifndef BAREMETAL
+    {
+        uint64_t _wall_ns = (uint64_t)(_wall_end.tv_sec - _wall_start.tv_sec) * 1000000000ULL
+                          + (uint64_t)(_wall_end.tv_nsec - _wall_start.tv_nsec);
+        printf("Wall time: %llu ns\n", (unsigned long long)_wall_ns);
+    }
+#endif
 
     return 0;
 }

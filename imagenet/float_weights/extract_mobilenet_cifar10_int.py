@@ -3,7 +3,7 @@
 Extract INT8-quantized weights from HuggingFace MobileNetV2 fine-tuned on
 CIFAR-10 (jialicheng/cifar10_mobilenet-v2) and generate:
   - ../mobilenet_cifar10_params.h  (INT8 weights, INT32 biases, power-of-2 output_scale)
-  - ../cifar10_images.h            (4 sample CIFAR-10 test images)
+  - ../cifar10_images.h            (4 sample CIFAR-10 test images, resized to 224x224)
 
 Quantization approach:
   - Per-layer symmetric weight quantization: w_int8 = clip(round(w_float / scale), -128, 127)
@@ -24,7 +24,7 @@ import torch
 from transformers import MobileNetV2ForImageClassification
 
 MODEL_NAME = "jialicheng/cifar10_mobilenet-v2"
-INPUT_DIM = 32
+INPUT_DIM = 224   # Model was fine-tuned from 224x224 ImageNet MobileNetV2
 BATCH_SIZE = 4
 NUM_CLASSES = 10
 
@@ -174,12 +174,55 @@ def build_layer_mapping():
 # BatchNorm folding
 # ---------------------------------------------------------------------------
 
+# Channels where BN running_var is below this are treated as 'dead'
+# (near-zero variance ⇒ 1/sqrt(var) blows up ⇒ numerically unstable folded
+# weights that inflate w_scale and in turn inflate bias INT32 values,
+# saturating virtually all INT8 outputs).
+_BN_DEAD_VAR_THRESHOLD = 1e-3
+
+# After dead-channel zeroing, if any surviving channel's max |weight| is
+# more than this factor above the median of surviving channels, clip that
+# channel's weights at the threshold.  Handles genuinely-active channels
+# that have a pathologically-large BN γ from fine-tuning, without losing
+# the channel's feature entirely.
+_OUTLIER_WEIGHT_RATIO = 5.0
+
+
 def fold_bn(conv_weight, bn_weight, bn_bias, bn_mean, bn_var, eps=1e-5):
+    """Fold BN into conv weights, with dead-channel + outlier stabilisation.
+
+    Two-stage numerical clean-up:
+    1. Dead channels (running_var < _BN_DEAD_VAR_THRESHOLD): 1/sqrt(var)
+       blows up, producing huge folded weights.  Zero the weight and set the
+       folded bias to bn_bias (the channel's near-constant output ≈ β).
+    2. Outlier channels (live but max |w| > _OUTLIER_WEIGHT_RATIO × median of
+       live channels): caused by pathologically large BN γ from fine-tuning.
+       Clip the weight channel-wise to the outlier threshold.  The bias is
+       kept as-is (depends on BN β/γ/mean/var, not the conv weight).
+    """
     inv_std = 1.0 / np.sqrt(bn_var + eps)
     scale = bn_weight * inv_std
     shape = [conv_weight.shape[0]] + [1] * (conv_weight.ndim - 1)
     w_folded = conv_weight * scale.reshape(shape)
     b_folded = bn_bias - bn_weight * bn_mean * inv_std
+
+    # Stage 1 – dead channels
+    dead = bn_var < _BN_DEAD_VAR_THRESHOLD
+    if np.any(dead):
+        w_folded[dead] = 0.0
+        b_folded[dead] = bn_bias[dead]
+
+    # Stage 2 – outlier clipping
+    ch_max = np.max(np.abs(w_folded.reshape(w_folded.shape[0], -1)), axis=1)
+    live = ch_max > 0
+    if np.sum(live) > 1:
+        median_max = np.median(ch_max[live])
+        if median_max > 0:
+            clip_val = _OUTLIER_WEIGHT_RATIO * median_max
+            outlier_idx = np.where((ch_max > clip_val) & live)[0]
+            for c in outlier_idx:
+                w_folded[c] = np.clip(w_folded[c], -clip_val, clip_val)
+
     return w_folded, b_folded
 
 
@@ -189,6 +232,9 @@ def fold_bn(conv_weight, bn_weight, bn_bias, bn_mean, bn_var, eps=1e-5):
 
 def reshape_conv_weight(w):
     out_ch = w.shape[0]
+    if w.ndim == 4:
+        # PyTorch: [out_ch, C, kH, kW] -> Gemmini NHWC: [out_ch, kH, kW, C]
+        w = w.transpose(0, 2, 3, 1)
     return w.reshape(out_ch, -1).T
 
 def reshape_dw_weight(w):
@@ -220,31 +266,60 @@ def quantize_bias_int32(b_float, combined_scale):
     return b_int
 
 
-def compute_output_scale_pow2(w_scale, x_scale, y_range):
-    """Compute output_scale as nearest power-of-2.
+def compute_output_scale(w_scale, x_scale, y_range):
+    """Compute output_scale as an exact float.
 
     output_scale = w_scale * x_scale / y_scale  (where y_scale = y_range/127)
-    Expressed as 1/(1 << N).
+    Using an exact float avoids the precision loss (and the ≤1.0 cap) of the
+    old power-of-2 rounding, which caused saturation for layers with large
+    BN-folded weights.
     """
     y_scale = y_range / 127.0
     raw = (w_scale * x_scale) / y_scale
     if raw <= 0 or not np.isfinite(raw):
-        return 0, "(1.0 / (1 << 0))"
-    log_val = -math.log2(raw)
-    N = max(0, min(15, round(log_val)))
-    return N, f"(1.0 / (1 << {N}))"
+        raw = 1.0
+    return raw, f"{raw:.8e}f"
 
 
 def estimate_activation_range(bn_gamma, bn_beta, has_relu):
-    """Estimate output activation range from BN gamma/beta (3-sigma rule)."""
+    """Estimate output activation range from BN gamma/beta (3-sigma rule).
+
+    For ReLU layers, MobileNetV2 uses ReLU6 which hard-clamps activations to
+    [0, 6].  The raw BN 3-sigma estimate can exceed 6 (because it does not
+    account for ReLU6 saturation), which propagates an inflated x_scale to
+    downstream layers and causes output_scale > 1.  Cap at 6.0 for correctness.
+    """
     gamma_max = np.max(np.abs(bn_gamma))
     beta_max = np.max(np.abs(bn_beta))
     if has_relu:
         # ReLU clips negatives; approximate positive range
         y_range = max(float(np.max(bn_beta + 3.0 * np.abs(bn_gamma))), 1.0)
+        y_range = min(y_range, 6.0)   # ReLU6 hard upper bound
     else:
         y_range = max(beta_max + 3.0 * gamma_max, 1.0)
     return y_range
+
+
+def quantize_depthwise_weight_int8(w_float, percentile=65.0):
+    """Robust INT8 quantization for depthwise conv weights.
+
+    Depthwise conv layers can contain dead BN channels (near-zero running
+    variance) whose BN-folded weights are orders of magnitude larger than
+    those of normal channels.  When we use the global max for w_scale these
+    outliers inflate it so severely that ALL normal channels lose precision
+    and output_scale >> 1 (causing INT8 saturation for most activations).
+
+    Fix: derive w_scale from the 65th-percentile of per-channel max-abs
+    values.  Dead channels (the top ~19-31% outliers) are allowed to
+    saturate to +/-127 INT8; their downstream 1x1 projection weights are
+    near-zero because the network learned to ignore these channels.
+    """
+    out_ch = w_float.shape[0]
+    per_ch_max = np.max(np.abs(w_float.reshape(out_ch, -1)), axis=1)
+    w_scale_base = max(float(np.percentile(per_ch_max, percentile)), 1e-10)
+    w_scale = w_scale_base / 127.0
+    w_int = np.clip(np.round(w_float / w_scale), -128, 127).astype(np.int8)
+    return w_int, w_scale
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +393,7 @@ def write_conv_layer(f, entry, conv_params, buffers):
     w_int = entry["weight"]
     b_int = entry["bias"]
     output_scale_str = entry["output_scale_str"]
+    res_scale = entry.get("res_scale", 1.0)
     p = conv_params[name]
 
     f.write(f"static const elem_t {name}_w[{p['patch_size']}][{p['out_channels']}] row_align(1) = ")
@@ -342,7 +418,7 @@ def write_conv_layer(f, entry, conv_params, buffers):
     f.write(f".pool_padding={p['pool_padding']}, .out_dim_pooled={p['out_dim_pooled']}, ")
     f.write(f".output_scale={output_scale_str}, ")
     f.write(f".I={p['I']}, .J={p['J']}, .K={p['K']}, ")
-    f.write(f".res_scale=(1.0 / (1 << 0))")
+    f.write(f".res_scale={res_scale:.8e}f")
     f.write("};\n")
 
 
@@ -351,6 +427,7 @@ def write_dw_layer(f, entry, conv_params, buffers):
     w_int = entry["weight"]
     b_int = entry["bias"]
     output_scale_str = entry["output_scale_str"]
+    res_scale = entry.get("res_scale", 1.0)
     p = conv_params[name]
 
     f.write(f"static const elem_t {name}_w[{p['out_channels']}][3][3] row_align(1) = ")
@@ -374,7 +451,7 @@ def write_dw_layer(f, entry, conv_params, buffers):
     f.write(f".pool_size={p['pool_size']}, .pool_stride={p['pool_stride']}, ")
     f.write(f".pool_padding={p['pool_padding']}, .out_dim_pooled={p['out_dim_pooled']}, ")
     f.write(f".output_scale={output_scale_str}, ")
-    f.write(f".res_scale=(1.0 / (1 << 0)), ")
+    f.write(f".res_scale={res_scale:.8e}f, ")
     f.write(f".I={p['I']}, .J={p['J']}")
     f.write("};\n")
 
@@ -408,32 +485,68 @@ def write_fc_layer(f, entry):
 # CIFAR-10 image generation
 # ---------------------------------------------------------------------------
 
-def generate_cifar10_images(output_path, indices=None):
-    """Generate cifar10_images.h with 4 sample CIFAR-10 test images."""
-    try:
-        from torchvision.datasets import CIFAR10
-    except ImportError:
-        print("WARNING: torchvision not installed — skipping image generation.")
-        print("  pip install torchvision")
-        return None
+def generate_cifar10_images(output_path, indices=None, img_mean=None, img_std=None):
+    """Generate cifar10_images.h with 4 sample CIFAR-10 test images.
+
+    Images are normalised with the model's own mean/std and stored as INT8
+    in the range [-127, 127] so that x_scale = max_abs_norm / 127.
+    """
+    if img_mean is None:
+        img_mean = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+    if img_std is None:
+        img_std  = np.array([0.5, 0.5, 0.5], dtype=np.float32)
 
     if indices is None:
         indices = [0, 1, 2, 3]
 
-    dataset = CIFAR10(root="/tmp/cifar10_data", train=False, download=True)
+    # Try torchvision first, then HuggingFace datasets as fallback
+    def _make_getter():
+        try:
+            from torchvision.datasets import CIFAR10
+            dataset = CIFAR10(root="/tmp/cifar10_data", train=False, download=True)
+            def _get(idx):
+                return dataset[idx]
+            return _get
+        except Exception:
+            pass
+        try:
+            from datasets import load_dataset as _hf_load
+            _hf_ds = _hf_load("uoft-cs/cifar10", split="test", trust_remote_code=False)
+            def _get(idx):
+                item = _hf_ds[idx]
+                return item["img"], item["label"]
+            return _get
+        except Exception:
+            pass
+        return None
 
+    _get_item = _make_getter()
+    if _get_item is None:
+        print("WARNING: Could not load CIFAR-10 (need torchvision or datasets).")
+        print("  pip install torchvision   or   pip install datasets")
+        return None
+
+    from PIL import Image as PILImage
     images = []
     labels = []
     for idx in indices:
-        img_pil, label = dataset[idx]
-        img_np = np.array(img_pil, dtype=np.int16)
-        img_centered = np.clip(img_np - 128, -128, 127)
-        images.append(img_centered)
+        img_pil, label = _get_item(idx)
+        if INPUT_DIM != 32:
+            img_pil = img_pil.resize((INPUT_DIM, INPUT_DIM), PILImage.BILINEAR)
+        img_np = np.array(img_pil, dtype=np.float32)
+        # Normalise to the same float range the model was trained on
+        img_float = (img_np / 255.0 - img_mean) / img_std          # shape [H,W,3]
+        # Compute x_scale from worst-case range across all channels
+        f_min = float(np.min((0.0   / 255.0 - img_mean) / img_std))
+        f_max = float(np.max((255.0 / 255.0 - img_mean) / img_std))
+        x_sc  = max(abs(f_min), abs(f_max)) / 127.0
+        img_int = np.clip(np.round(img_float / x_sc), -127, 127).astype(np.int8)
+        images.append(img_int)
         labels.append(label)
 
     with open(output_path, "w") as f:
-        f.write("#ifndef CIFAR10_IMAGES_H\n")
-        f.write("#define CIFAR10_IMAGES_H\n\n")
+        f.write("#ifndef CIFAR10_IMAGES_224_H\n")
+        f.write("#define CIFAR10_IMAGES_224_H\n\n")
         f.write("#include <include/gemmini_params.h>\n\n")
         f.write(f"// CIFAR-10 test images at indices {indices}\n")
         cifar10_classes = ["airplane", "automobile", "bird", "cat", "deer",
@@ -458,7 +571,7 @@ def generate_cifar10_images(output_path, indices=None):
                 f.write("}")
             f.write("}")
         f.write("};\n\n")
-        f.write("#endif // CIFAR10_IMAGES_H\n")
+        f.write("#endif // CIFAR10_IMAGES_224_H\n")
 
     print(f"  Written {output_path}")
     print(f"  Labels: {labels} ({label_names})")
@@ -500,10 +613,53 @@ def main():
                    for name, k, ic, oc, s, pad, dw, act in LAYER_ARCH}
 
     # -----------------------------------------------------------------------
+    # Determine input normalization from the model's image processor
+    # -----------------------------------------------------------------------
+    try:
+        from transformers import AutoImageProcessor
+        processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+        img_mean = np.array(processor.image_mean, dtype=np.float32)  # e.g. [0.5,0.5,0.5]
+        img_std  = np.array(processor.image_std,  dtype=np.float32)  # e.g. [0.5,0.5,0.5]
+        print(f"Image processor normalization: mean={img_mean}, std={img_std}")
+    except Exception:
+        # Fall back to safe defaults (MobileNetV2 HuggingFace default)
+        img_mean = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+        img_std  = np.array([0.5, 0.5, 0.5], dtype=np.float32)
+        print("WARNING: Could not load image processor; using mean=0.5, std=0.5")
+
+    # Each pixel p in [0,255] → normalised float f = (p/255 - mean) / std ≈ [-1, +1]
+    # We store INT8 as x_int = clip(round(f * 127), -127, 127), so x_scale = 1/127.
+    # Using the worst-case range across all three channels:
+    f_min = float(np.min((0.0   / 255.0 - img_mean) / img_std))
+    f_max = float(np.max((255.0 / 255.0 - img_mean) / img_std))
+    x_scale = max(abs(f_min), abs(f_max)) / 127.0
+    print(f"Input float range: [{f_min:.4f}, {f_max:.4f}]  →  x_scale={x_scale:.6f}")
+
+    # -----------------------------------------------------------------------
+    # Residual-connection skip-source map
+    #   key   = gemmini reduce layer that receives the addition
+    #   value = gemmini reduce layer whose output is the skip tensor
+    # Blocks are identified by: stride==1 AND in_channels==out_channels for
+    # the entire inverted-residual triple (expand→dw→reduce).
+    # -----------------------------------------------------------------------
+    RESIDUAL_SKIP = {
+        "conv_9":  "conv_6",
+        "conv_15": "conv_12",
+        "conv_18": "conv_15",
+        "conv_24": "conv_21",
+        "conv_27": "conv_24",
+        "conv_30": "conv_27",
+        "conv_36": "conv_33",
+        "conv_39": "conv_36",
+        "conv_45": "conv_42",
+        "conv_48": "conv_45",
+    }
+
+    # -----------------------------------------------------------------------
     # Extract & quantize all layers with scale propagation
     # -----------------------------------------------------------------------
-    x_scale = 1.0  # input images in [-128, 127], scale = 1.0 (1 LSB = 1 unit)
     layers_data = []
+    layer_y_range = {}   # gemmini_name → y_range, filled as we go
 
     print(f"\nExtracting and quantizing {len(mapping)} layers...")
     for gemmini_name, hf_prefix, layer_type in mapping:
@@ -524,10 +680,11 @@ def main():
                       + np.max(np.abs(fc_w_float)) * np.sqrt(1280) * x_scale * 10),
                 1.0
             )
-            N, output_scale_str = compute_output_scale_pow2(w_scale, x_scale, fc_y_range)
+            _os, output_scale_str = compute_output_scale(w_scale, x_scale, fc_y_range)
+            layer_y_range[gemmini_name] = fc_y_range
 
             print(f"  {gemmini_name:15s}  w_scale={w_scale:.6f}  x_scale={x_scale:.6f}  "
-                  f"y_range={fc_y_range:.2f}  output_scale=1/(1<<{N})")
+                  f"y_range={fc_y_range:.2f}  output_scale={_os:.4e}")
 
             layers_data.append({
                 "name": gemmini_name,
@@ -546,7 +703,8 @@ def main():
             arch_info = arch_lookup.get(gemmini_name)
             has_relu = arch_info is not None and arch_info[7] == "relu"
 
-            # Quantize weights
+            # Quantize weights: now that fold_bn zeroes dead-channel weights
+            # the global max is stable for both DW and regular conv layers.
             w_int, w_scale = quantize_weight_int8(w_float)
 
             # Quantize bias: b_int = round(b_float / (w_scale * x_scale))
@@ -559,11 +717,26 @@ def main():
                 bn_beta.numpy() if isinstance(bn_beta, torch.Tensor) else bn_beta,
                 has_relu
             )
+            layer_y_range[gemmini_name] = y_range
 
-            N, output_scale_str = compute_output_scale_pow2(w_scale, x_scale, y_range)
+            _os, output_scale_str = compute_output_scale(w_scale, x_scale, y_range)
+
+            # --- Residual-connection res_scale ---
+            # res_scale rescales the SKIP tensor so it is in the same units as
+            # this layer's output before the addition:
+            #   res_scale = y_scale_skip / y_scale_main
+            #             = y_range_skip / y_range_main
+            res_scale = 1.0
+            if gemmini_name in RESIDUAL_SKIP:
+                skip_src = RESIDUAL_SKIP[gemmini_name]
+                if skip_src in layer_y_range:
+                    res_scale = layer_y_range[skip_src] / y_range
+                else:
+                    print(f"  WARNING: skip source {skip_src} not yet processed for {gemmini_name}")
 
             print(f"  {gemmini_name:15s}  w_scale={w_scale:.6f}  x_scale={x_scale:.6f}  "
-                  f"y_range={y_range:.2f}  output_scale=1/(1<<{N})  "
+                  f"y_range={y_range:.2f}  output_scale={_os:.4e}  "
+                  f"res_scale={res_scale:.4f}  "
                   f"{'RELU' if has_relu else 'LINEAR'}")
 
             layers_data.append({
@@ -572,6 +745,7 @@ def main():
                 "weight": w_int,
                 "bias": b_int,
                 "output_scale_str": output_scale_str,
+                "res_scale": res_scale,
             })
 
             # Propagate: next layer's input scale = this layer's output scale
@@ -590,10 +764,10 @@ def main():
     # -----------------------------------------------------------------------
     # Generate CIFAR-10 images
     # -----------------------------------------------------------------------
-    images_path = os.path.join(output_dir, "..", "cifar10_images.h")
+    images_path = os.path.join(output_dir, "..", "cifar10_images_224.h")
     images_path = os.path.normpath(images_path)
     print(f"\nGenerating {images_path}...")
-    labels = generate_cifar10_images(images_path)
+    labels = generate_cifar10_images(images_path, img_mean=img_mean, img_std=img_std)
 
     # Summary
     total_params = sum(e["weight"].size + e["bias"].size for e in layers_data)

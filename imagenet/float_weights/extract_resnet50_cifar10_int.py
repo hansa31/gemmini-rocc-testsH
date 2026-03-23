@@ -25,7 +25,7 @@ import os
 import math
 import numpy as np
 import torch
-from transformers import ResNetForImageClassification
+from huggingface_hub import hf_hub_download
 
 MODEL_NAME = "edadaltocg/resnet50_cifar10"
 INPUT_DIM = 32
@@ -38,87 +38,88 @@ NUM_CLASSES = 10
 # (gemmini_name, hf_prefix, layer_type)
 # layer_type: 'conv' for conv+BN, 'fc' for FC classifier
 LAYER_MAPPING = [
+    # (gemmini_name, conv_key, bn_key, layer_type)
     # Initial 3x3 conv + BN (CIFAR-10 modification: 3x3 stride 1, no maxpool)
-    ("conv_1",  "resnet.embedder.embedder",                          "conv"),
+    ("conv_1",  "conv1",                        "bn1",                        "conv"),
 
     # Stage 0 (layer1) — 3 bottleneck blocks (64->64->256)
     # Block 0: projection shortcut conv_5
-    ("conv_2",  "resnet.encoder.stages.0.layers.0.layer.0",          "conv"),
-    ("conv_3",  "resnet.encoder.stages.0.layers.0.layer.1",          "conv"),  # 3x3
-    ("conv_4",  "resnet.encoder.stages.0.layers.0.layer.2",          "conv"),
-    ("conv_5",  "resnet.encoder.stages.0.layers.0.shortcut",         "conv"),  # projection
+    ("conv_2",  "layer1.0.conv1",               "layer1.0.bn1",               "conv"),
+    ("conv_3",  "layer1.0.conv2",               "layer1.0.bn2",               "conv"),  # 3x3
+    ("conv_4",  "layer1.0.conv3",               "layer1.0.bn3",               "conv"),
+    ("conv_5",  "layer1.0.downsample.0",        "layer1.0.downsample.1",      "conv"),  # projection
     # Block 1: identity shortcut
-    ("conv_6",  "resnet.encoder.stages.0.layers.1.layer.0",          "conv"),
-    ("conv_7",  "resnet.encoder.stages.0.layers.1.layer.1",          "conv"),  # 3x3
-    ("conv_8",  "resnet.encoder.stages.0.layers.1.layer.2",          "conv"),
+    ("conv_6",  "layer1.1.conv1",               "layer1.1.bn1",               "conv"),
+    ("conv_7",  "layer1.1.conv2",               "layer1.1.bn2",               "conv"),  # 3x3
+    ("conv_8",  "layer1.1.conv3",               "layer1.1.bn3",               "conv"),
     # Block 2: identity shortcut
-    ("conv_9",  "resnet.encoder.stages.0.layers.2.layer.0",          "conv"),
-    ("conv_10", "resnet.encoder.stages.0.layers.2.layer.1",          "conv"),  # 3x3
-    ("conv_11", "resnet.encoder.stages.0.layers.2.layer.2",          "conv"),
+    ("conv_9",  "layer1.2.conv1",               "layer1.2.bn1",               "conv"),
+    ("conv_10", "layer1.2.conv2",               "layer1.2.bn2",               "conv"),  # 3x3
+    ("conv_11", "layer1.2.conv3",               "layer1.2.bn3",               "conv"),
 
     # Stage 1 (layer2) — 4 bottleneck blocks (128->128->512)
     # Block 0: stride-2 3x3 conv (conv_13), projection shortcut conv_15
-    ("conv_12", "resnet.encoder.stages.1.layers.0.layer.0",          "conv"),
-    ("conv_13", "resnet.encoder.stages.1.layers.0.layer.1",          "conv"),  # 3x3, stride 2
-    ("conv_14", "resnet.encoder.stages.1.layers.0.layer.2",          "conv"),
-    ("conv_15", "resnet.encoder.stages.1.layers.0.shortcut",         "conv"),  # projection, stride 2
+    ("conv_12", "layer2.0.conv1",               "layer2.0.bn1",               "conv"),
+    ("conv_13", "layer2.0.conv2",               "layer2.0.bn2",               "conv"),  # 3x3, stride 2
+    ("conv_14", "layer2.0.conv3",               "layer2.0.bn3",               "conv"),
+    ("conv_15", "layer2.0.downsample.0",        "layer2.0.downsample.1",      "conv"),  # projection, stride 2
     # Block 1
-    ("conv_16", "resnet.encoder.stages.1.layers.1.layer.0",          "conv"),
-    ("conv_17", "resnet.encoder.stages.1.layers.1.layer.1",          "conv"),  # 3x3
-    ("conv_18", "resnet.encoder.stages.1.layers.1.layer.2",          "conv"),
+    ("conv_16", "layer2.1.conv1",               "layer2.1.bn1",               "conv"),
+    ("conv_17", "layer2.1.conv2",               "layer2.1.bn2",               "conv"),  # 3x3
+    ("conv_18", "layer2.1.conv3",               "layer2.1.bn3",               "conv"),
     # Block 2
-    ("conv_19", "resnet.encoder.stages.1.layers.2.layer.0",          "conv"),
-    ("conv_20", "resnet.encoder.stages.1.layers.2.layer.1",          "conv"),  # 3x3
-    ("conv_21", "resnet.encoder.stages.1.layers.2.layer.2",          "conv"),
+    ("conv_19", "layer2.2.conv1",               "layer2.2.bn1",               "conv"),
+    ("conv_20", "layer2.2.conv2",               "layer2.2.bn2",               "conv"),  # 3x3
+    ("conv_21", "layer2.2.conv3",               "layer2.2.bn3",               "conv"),
     # Block 3
-    ("conv_22", "resnet.encoder.stages.1.layers.3.layer.0",          "conv"),
-    ("conv_23", "resnet.encoder.stages.1.layers.3.layer.1",          "conv"),  # 3x3
-    ("conv_24", "resnet.encoder.stages.1.layers.3.layer.2",          "conv"),
+    ("conv_22", "layer2.3.conv1",               "layer2.3.bn1",               "conv"),
+    ("conv_23", "layer2.3.conv2",               "layer2.3.bn2",               "conv"),  # 3x3
+    ("conv_24", "layer2.3.conv3",               "layer2.3.bn3",               "conv"),
 
     # Stage 2 (layer3) — 6 bottleneck blocks (256->256->1024)
     # Block 0: stride-2 3x3 conv (conv_26), projection shortcut conv_28
-    ("conv_25", "resnet.encoder.stages.2.layers.0.layer.0",          "conv"),
-    ("conv_26", "resnet.encoder.stages.2.layers.0.layer.1",          "conv"),  # 3x3, stride 2
-    ("conv_27", "resnet.encoder.stages.2.layers.0.layer.2",          "conv"),
-    ("conv_28", "resnet.encoder.stages.2.layers.0.shortcut",         "conv"),  # projection, stride 2
+    ("conv_25", "layer3.0.conv1",               "layer3.0.bn1",               "conv"),
+    ("conv_26", "layer3.0.conv2",               "layer3.0.bn2",               "conv"),  # 3x3, stride 2
+    ("conv_27", "layer3.0.conv3",               "layer3.0.bn3",               "conv"),
+    ("conv_28", "layer3.0.downsample.0",        "layer3.0.downsample.1",      "conv"),  # projection, stride 2
     # Block 1
-    ("conv_29", "resnet.encoder.stages.2.layers.1.layer.0",          "conv"),
-    ("conv_30", "resnet.encoder.stages.2.layers.1.layer.1",          "conv"),  # 3x3
-    ("conv_31", "resnet.encoder.stages.2.layers.1.layer.2",          "conv"),
+    ("conv_29", "layer3.1.conv1",               "layer3.1.bn1",               "conv"),
+    ("conv_30", "layer3.1.conv2",               "layer3.1.bn2",               "conv"),  # 3x3
+    ("conv_31", "layer3.1.conv3",               "layer3.1.bn3",               "conv"),
     # Block 2
-    ("conv_32", "resnet.encoder.stages.2.layers.2.layer.0",          "conv"),
-    ("conv_33", "resnet.encoder.stages.2.layers.2.layer.1",          "conv"),  # 3x3
-    ("conv_34", "resnet.encoder.stages.2.layers.2.layer.2",          "conv"),
+    ("conv_32", "layer3.2.conv1",               "layer3.2.bn1",               "conv"),
+    ("conv_33", "layer3.2.conv2",               "layer3.2.bn2",               "conv"),  # 3x3
+    ("conv_34", "layer3.2.conv3",               "layer3.2.bn3",               "conv"),
     # Block 3
-    ("conv_35", "resnet.encoder.stages.2.layers.3.layer.0",          "conv"),
-    ("conv_36", "resnet.encoder.stages.2.layers.3.layer.1",          "conv"),  # 3x3
-    ("conv_37", "resnet.encoder.stages.2.layers.3.layer.2",          "conv"),
+    ("conv_35", "layer3.3.conv1",               "layer3.3.bn1",               "conv"),
+    ("conv_36", "layer3.3.conv2",               "layer3.3.bn2",               "conv"),  # 3x3
+    ("conv_37", "layer3.3.conv3",               "layer3.3.bn3",               "conv"),
     # Block 4
-    ("conv_38", "resnet.encoder.stages.2.layers.4.layer.0",          "conv"),
-    ("conv_39", "resnet.encoder.stages.2.layers.4.layer.1",          "conv"),  # 3x3
-    ("conv_40", "resnet.encoder.stages.2.layers.4.layer.2",          "conv"),
+    ("conv_38", "layer3.4.conv1",               "layer3.4.bn1",               "conv"),
+    ("conv_39", "layer3.4.conv2",               "layer3.4.bn2",               "conv"),  # 3x3
+    ("conv_40", "layer3.4.conv3",               "layer3.4.bn3",               "conv"),
     # Block 5
-    ("conv_41", "resnet.encoder.stages.2.layers.5.layer.0",          "conv"),
-    ("conv_42", "resnet.encoder.stages.2.layers.5.layer.1",          "conv"),  # 3x3
-    ("conv_43", "resnet.encoder.stages.2.layers.5.layer.2",          "conv"),
+    ("conv_41", "layer3.5.conv1",               "layer3.5.bn1",               "conv"),
+    ("conv_42", "layer3.5.conv2",               "layer3.5.bn2",               "conv"),  # 3x3
+    ("conv_43", "layer3.5.conv3",               "layer3.5.bn3",               "conv"),
 
     # Stage 3 (layer4) — 3 bottleneck blocks (512->512->2048)
     # Block 0: stride-2 3x3 conv (conv_45), projection shortcut conv_47
-    ("conv_44", "resnet.encoder.stages.3.layers.0.layer.0",          "conv"),
-    ("conv_45", "resnet.encoder.stages.3.layers.0.layer.1",          "conv"),  # 3x3, stride 2
-    ("conv_46", "resnet.encoder.stages.3.layers.0.layer.2",          "conv"),
-    ("conv_47", "resnet.encoder.stages.3.layers.0.shortcut",         "conv"),  # projection, stride 2
+    ("conv_44", "layer4.0.conv1",               "layer4.0.bn1",               "conv"),
+    ("conv_45", "layer4.0.conv2",               "layer4.0.bn2",               "conv"),  # 3x3, stride 2
+    ("conv_46", "layer4.0.conv3",               "layer4.0.bn3",               "conv"),
+    ("conv_47", "layer4.0.downsample.0",        "layer4.0.downsample.1",      "conv"),  # projection, stride 2
     # Block 1
-    ("conv_48", "resnet.encoder.stages.3.layers.1.layer.0",          "conv"),
-    ("conv_49", "resnet.encoder.stages.3.layers.1.layer.1",          "conv"),  # 3x3
-    ("conv_50", "resnet.encoder.stages.3.layers.1.layer.2",          "conv"),
+    ("conv_48", "layer4.1.conv1",               "layer4.1.bn1",               "conv"),
+    ("conv_49", "layer4.1.conv2",               "layer4.1.bn2",               "conv"),  # 3x3
+    ("conv_50", "layer4.1.conv3",               "layer4.1.bn3",               "conv"),
     # Block 2
-    ("conv_51", "resnet.encoder.stages.3.layers.2.layer.0",          "conv"),
-    ("conv_52", "resnet.encoder.stages.3.layers.2.layer.1",          "conv"),  # 3x3
-    ("conv_53", "resnet.encoder.stages.3.layers.2.layer.2",          "conv"),
+    ("conv_51", "layer4.2.conv1",               "layer4.2.bn1",               "conv"),
+    ("conv_52", "layer4.2.conv2",               "layer4.2.bn2",               "conv"),  # 3x3
+    ("conv_53", "layer4.2.conv3",               "layer4.2.bn3",               "conv"),
 
     # Global average pool -> FC classifier (2048->10)
-    ("fc_54",   "classifier",                                         "fc"),
+    ("fc_54",   "fc",                            None,                          "fc"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -204,7 +205,7 @@ CONV_PARAMS = {
 # fmt: on
 
 FC_PARAMS = {
-    # fc_54_w layout: [in_features][out_features] = [2048][10]
+    # fc_54_w layout: [out_features][in_features] = [10][2048]  ← A matrix for tiled_matmul_nn_auto(I=10,K=2048)
     # fc_54_b layout: [out_features][batch_size]  = [10][4]
     # fc_54_out layout: [out_features][batch_size] = [10][4]
     "fc_54": {
@@ -320,6 +321,15 @@ LAYER_ACTIVATION = {
 # ---------------------------------------------------------------------------
 
 def fold_bn(conv_weight, bn_weight, bn_bias, bn_mean, bn_var, eps=1e-5):
+    """Fold BN into conv weights.
+
+    ResNet-50 CIFAR-10 (edadaltocg/resnet50_cifar10) has very small but
+    non-zero BN running_var for its bottleneck expand layers; the corresponding
+    BN gamma values are proportionally small, so gamma/sqrt(var) stays bounded
+    and the simple fold is numerically stable.  No dead-channel heuristic
+    is needed here (unlike the MobileNetV2 CIFAR-10 model which had pathological
+    near-zero-variance channels with large gamma from fine-tuning).
+    """
     inv_std = 1.0 / np.sqrt(bn_var + eps)
     scale = bn_weight * inv_std
     shape = [conv_weight.shape[0]] + [1] * (conv_weight.ndim - 1)
@@ -334,6 +344,9 @@ def fold_bn(conv_weight, bn_weight, bn_bias, bn_mean, bn_var, eps=1e-5):
 
 def reshape_conv_weight(w):
     out_ch = w.shape[0]
+    if w.ndim == 4:
+        # PyTorch: [out_ch, C, kH, kW] -> Gemmini NHWC im2col: [out_ch, kH, kW, C]
+        w = w.transpose(0, 2, 3, 1)
     return w.reshape(out_ch, -1).T
 
 
@@ -359,14 +372,17 @@ def quantize_bias_int32(b_float, combined_scale):
     return b_int
 
 
-def compute_output_scale_pow2(w_scale, x_scale, y_range):
+def compute_output_scale(w_scale, x_scale, y_range):
+    """Exact float output_scale = w_scale * x_scale / y_scale.
+
+    Using exact float avoids the <=1.0 cap of the old power-of-2 version,
+    which caused accumulator saturation for layers with large BN-folded weights.
+    """
     y_scale = y_range / 127.0
     raw = (w_scale * x_scale) / y_scale
     if raw <= 0 or not np.isfinite(raw):
-        return 0, "(1.0 / (1 << 0))"
-    log_val = -math.log2(raw)
-    N = max(0, min(15, round(log_val)))
-    return N, f"(1.0 / (1 << {N}))"
+        raw = 1.0
+    return raw, f"{raw:.8e}f"
 
 
 def estimate_activation_range(bn_gamma, bn_beta, has_relu):
@@ -397,17 +413,17 @@ def fmt_int_2d(arr):
 # HuggingFace state dict helpers
 # ---------------------------------------------------------------------------
 
-def get_conv_bn_params(state_dict, prefix):
-    conv_w = state_dict[f"{prefix}.convolution.weight"].numpy()
-    bn_gamma = state_dict[f"{prefix}.normalization.weight"].numpy()
-    bn_beta = state_dict[f"{prefix}.normalization.bias"].numpy()
-    bn_mean = state_dict[f"{prefix}.normalization.running_mean"].numpy()
-    bn_var = state_dict[f"{prefix}.normalization.running_var"].numpy()
+def get_conv_bn_params(state_dict, conv_key, bn_key):
+    conv_w = state_dict[f"{conv_key}.weight"].numpy()
+    bn_gamma = state_dict[f"{bn_key}.weight"].numpy()
+    bn_beta = state_dict[f"{bn_key}.bias"].numpy()
+    bn_mean = state_dict[f"{bn_key}.running_mean"].numpy()
+    bn_var = state_dict[f"{bn_key}.running_var"].numpy()
     return conv_w, bn_gamma, bn_beta, bn_mean, bn_var
 
 
-def extract_and_fold(state_dict, hf_prefix):
-    conv_w, bn_gamma, bn_beta, bn_mean, bn_var = get_conv_bn_params(state_dict, hf_prefix)
+def extract_and_fold(state_dict, conv_key, bn_key):
+    conv_w, bn_gamma, bn_beta, bn_mean, bn_var = get_conv_bn_params(state_dict, conv_key, bn_key)
     w_folded, b_folded = fold_bn(conv_w, bn_gamma, bn_beta, bn_mean, bn_var)
     return reshape_conv_weight(w_folded), b_folded, bn_gamma, bn_beta
 
@@ -439,6 +455,7 @@ def write_conv_layer(f, entry):
     w_int = entry["weight"]
     b_int = entry["bias"]
     output_scale_str = entry["output_scale_str"]
+    res_scale = entry.get("res_scale", 1.0)
     p = CONV_PARAMS[name]
 
     f.write(f"static const elem_t {name}_w[{p['patch_size']}][{p['out_channels']}] row_align(1) = ")
@@ -464,7 +481,7 @@ def write_conv_layer(f, entry):
     f.write(f".pool_padding={p['pool_padding']}, .out_dim_pooled={p['out_dim_pooled']}, ")
     f.write(f".output_scale={output_scale_str}, ")
     f.write(f".I={p['I']}, .J={p['J']}, .K={p['K']}, ")
-    f.write(f".res_scale={p['res_scale']}")
+    f.write(f".res_scale={res_scale:.8e}f")
     f.write("};\n")
 
 
@@ -477,7 +494,7 @@ def write_fc_layer(f, entry):
     out_f = p["out_features"]
     in_f = p["in_features"]
 
-    f.write(f"static const elem_t {name}_w[{in_f}][{out_f}] row_align(1) = ")
+    f.write(f"static const elem_t {name}_w[{out_f}][{in_f}] row_align(1) = ")
     f.write(fmt_int_2d(w_int))
     f.write(";\n")
     f.write(f"static const acc_t {name}_b[{out_f}][{BATCH_SIZE}] row_align_acc(1) = ")
@@ -498,22 +515,22 @@ def write_fc_layer(f, entry):
 # ---------------------------------------------------------------------------
 
 def main():
-    print(f"Loading {MODEL_NAME} from HuggingFace...")
-    model = ResNetForImageClassification.from_pretrained(MODEL_NAME)
-    model.eval()
-    state_dict = {k: v.detach().cpu().float() for k, v in model.state_dict().items()}
+    print(f"Loading {MODEL_NAME} from HuggingFace (direct weights)...")
+    model_file = hf_hub_download(MODEL_NAME, "pytorch_model.bin")
+    state_dict = {k: v.float() for k, v in
+                  torch.load(model_file, map_location="cpu", weights_only=True).items()}
 
     # Verify model key structure
     all_keys = list(state_dict.keys())
-    has_embedder = any("resnet.embedder" in k for k in all_keys)
-    has_encoder = any("resnet.encoder" in k for k in all_keys)
-    print(f"  HF key structure: embedder={has_embedder}, encoder={has_encoder}")
-    if not has_embedder or not has_encoder:
+    has_conv1 = "conv1.weight" in state_dict
+    has_layer1 = any("layer1" in k for k in all_keys)
+    print(f"  timm key structure: conv1={has_conv1}, layer1={has_layer1}")
+    if not has_conv1 or not has_layer1:
         print("WARNING: Unexpected key structure. Available top-level keys:")
         top_keys = sorted(set(k.split(".")[0] for k in all_keys))
         print(f"  {top_keys}")
 
-    classifier_w = state_dict["classifier.1.weight"]
+    classifier_w = state_dict["fc.weight"]
     actual_classes = classifier_w.shape[0]
     print(f"Model: {actual_classes} output classes (expected {NUM_CLASSES})")
     assert actual_classes == NUM_CLASSES, \
@@ -526,19 +543,86 @@ def main():
               f"n_patches={p['n_patches']:5d}  {p['in_channels']}->{p['out_channels']}")
 
     # -----------------------------------------------------------------------
+    # Determine input normalization from the model's preprocessing
+    # edadaltocg/resnet50_cifar10 uses standard ImageNet normalization:
+    #   mean=[0.4914, 0.4822, 0.4465]  std=[0.2023, 0.1994, 0.2010]
+    # (these are the CIFAR-10 dataset mean/std, used by the training repo)
+    # -----------------------------------------------------------------------
+    try:
+        from transformers import AutoImageProcessor
+        processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
+        img_mean = np.array(processor.image_mean, dtype=np.float32)
+        img_std  = np.array(processor.image_std,  dtype=np.float32)
+        print(f"Image processor normalization: mean={img_mean}, std={img_std}")
+    except Exception:
+        # CIFAR-10 standard normalization
+        img_mean = np.array([0.4914, 0.4822, 0.4465], dtype=np.float32)
+        img_std  = np.array([0.2023, 0.1994, 0.2010], dtype=np.float32)
+        print(f"WARNING: Could not load image processor; using CIFAR-10 standard mean/std")
+
+    f_min = float(np.min((0.0   / 255.0 - img_mean) / img_std))
+    f_max = float(np.max((255.0 / 255.0 - img_mean) / img_std))
+    x_scale = max(abs(f_min), abs(f_max)) / 127.0
+    print(f"Input float range: [{f_min:.4f}, {f_max:.4f}]  ->  x_scale={x_scale:.6f}")
+
+    # -----------------------------------------------------------------------
+    # Residual-connection skip-source map
+    # key   = layer whose res_scale param is used in tiled_resadd_auto
+    # value = layer whose output is passed as the SKIP (first) tensor
+    # From resnet50_cifar10_stream.c:
+    #   tiled_resadd_auto(conv_X.I, conv_X.J, conv_X.res_scale, ...,
+    #                     conv_SKIP_out, conv_X_out, conv_X_out)
+    #   => res_scale = y_range[skip] / y_range[main=conv_X]
+    # -----------------------------------------------------------------------
+    RESIDUAL_SKIP = {
+        "conv_4":  "conv_5",   # Stage0 block0: projection shortcut
+        "conv_8":  "conv_4",   # Stage0 block1: identity
+        "conv_11": "conv_8",   # Stage0 block2: identity
+        "conv_14": "conv_15",  # Stage1 block0: projection shortcut
+        "conv_18": "conv_14",  # Stage1 block1: identity
+        "conv_21": "conv_18",  # Stage1 block2: identity
+        "conv_24": "conv_21",  # Stage1 block3: identity
+        "conv_27": "conv_28",  # Stage2 block0: projection shortcut
+        "conv_31": "conv_27",  # Stage2 block1: identity
+        "conv_34": "conv_31",  # Stage2 block2: identity
+        "conv_37": "conv_34",  # Stage2 block3: identity
+        "conv_40": "conv_37",  # Stage2 block4: identity
+        "conv_43": "conv_40",  # Stage2 block5: identity
+        "conv_46": "conv_47",  # Stage3 block0: projection shortcut
+        "conv_50": "conv_46",  # Stage3 block1: identity
+        "conv_53": "conv_50",  # Stage3 block2: identity
+    }
+
+    # -----------------------------------------------------------------------
+    # Pre-pass: compute y_range for every conv layer so that residual
+    # skip sources that come AFTER the consuming layer (e.g. conv_47 is
+    # the skip source for conv_46 but is extracted after it) are already
+    # available when we need their y_range in the main quantization loop.
+    # -----------------------------------------------------------------------
+    layer_y_range = {}   # gemmini_name -> y_range, filled as we go
+    for _gn, _ck, _bk, _lt in LAYER_MAPPING:
+        if _lt == "fc":
+            continue   # fc y_range depends on x_scale; computed in main loop
+        _w_float, _b_float, _bn_gamma, _bn_beta = extract_and_fold(state_dict, _ck, _bk)
+        _has_relu = LAYER_ACTIVATION.get(_gn, False)
+        _bn_gamma_np = _bn_gamma if isinstance(_bn_gamma, np.ndarray) else _bn_gamma.numpy()
+        _bn_beta_np  = _bn_beta  if isinstance(_bn_beta,  np.ndarray) else _bn_beta.numpy()
+        layer_y_range[_gn] = estimate_activation_range(_bn_gamma_np, _bn_beta_np, _has_relu)
+
+    # -----------------------------------------------------------------------
     # Extract & quantize all layers with scale propagation
     # -----------------------------------------------------------------------
-    x_scale = 1.0  # input images in [-128, 127], 1 LSB = 1 pixel unit
     layers_data = []
 
     print(f"\nExtracting and quantizing {len(LAYER_MAPPING)} layers...")
-    for gemmini_name, hf_prefix, layer_type in LAYER_MAPPING:
+    for gemmini_name, conv_key, bn_key, layer_type in LAYER_MAPPING:
         if layer_type == "fc":
-            fc_w_float = state_dict["classifier.1.weight"].numpy()   # [10, 2048]
-            fc_b_float = state_dict["classifier.1.bias"].numpy()     # [10]
+            fc_w_float = state_dict["fc.weight"].numpy()   # [10, 2048]
+            fc_b_float = state_dict["fc.bias"].numpy()     # [10]
 
-            # Gemmini FC layout: w[in_features][out_features] = w[2048][10]
-            w_gemmini = fc_w_float.T  # [2048, 10]
+            # Gemmini FC layout: w[out_features][in_features] = w[10][2048]
+            # Used as matrix A in tiled_matmul_nn_auto(I=out_features, K=in_features)
+            w_gemmini = fc_w_float  # [10, 2048] — NO transpose needed
             w_int, w_scale = quantize_weight_int8(w_gemmini)
 
             combined_scale = w_scale * x_scale
@@ -551,10 +635,11 @@ def main():
                       + np.max(np.abs(fc_w_float)) * np.sqrt(2048) * x_scale * 10),
                 1.0
             )
-            N, output_scale_str = compute_output_scale_pow2(w_scale, x_scale, fc_y_range)
+            _os, output_scale_str = compute_output_scale(w_scale, x_scale, fc_y_range)
+            layer_y_range[gemmini_name] = fc_y_range
 
             print(f"  {gemmini_name:12s}  w_scale={w_scale:.6f}  x_scale={x_scale:.6f}  "
-                  f"y_range={fc_y_range:.2f}  output_scale=1/(1<<{N})")
+                  f"y_range={fc_y_range:.2f}  output_scale={_os:.4e}")
 
             layers_data.append({
                 "name": gemmini_name,
@@ -566,7 +651,7 @@ def main():
 
         else:
             # Conv layer: extract and fold BN
-            w_float, b_float, bn_gamma, bn_beta = extract_and_fold(state_dict, hf_prefix)
+            w_float, b_float, bn_gamma, bn_beta = extract_and_fold(state_dict, conv_key, bn_key)
 
             has_relu = LAYER_ACTIVATION.get(gemmini_name, False)
 
@@ -577,11 +662,24 @@ def main():
             bn_gamma_np = bn_gamma if isinstance(bn_gamma, np.ndarray) else bn_gamma.numpy()
             bn_beta_np  = bn_beta  if isinstance(bn_beta,  np.ndarray) else bn_beta.numpy()
             y_range = estimate_activation_range(bn_gamma_np, bn_beta_np, has_relu)
+            layer_y_range[gemmini_name] = y_range
 
-            N, output_scale_str = compute_output_scale_pow2(w_scale, x_scale, y_range)
+            _os, output_scale_str = compute_output_scale(w_scale, x_scale, y_range)
+
+            # Residual res_scale: rescales the skip tensor to the same units as
+            # this layer's output before tiled_resadd_auto.
+            # res_scale = y_scale_skip / y_scale_main = y_range_skip / y_range_main
+            res_scale = 1.0
+            if gemmini_name in RESIDUAL_SKIP:
+                skip_src = RESIDUAL_SKIP[gemmini_name]
+                if skip_src in layer_y_range:
+                    res_scale = layer_y_range[skip_src] / y_range
+                else:
+                    print(f"  WARNING: skip source {skip_src} not yet processed for {gemmini_name}")
 
             print(f"  {gemmini_name:12s}  w_scale={w_scale:.6f}  x_scale={x_scale:.6f}  "
-                  f"y_range={y_range:.2f}  output_scale=1/(1<<{N})  "
+                  f"y_range={y_range:.2f}  output_scale={_os:.4e}  "
+                  f"res_scale={res_scale:.4f}  "
                   f"{'RELU' if has_relu else 'LINEAR'}")
 
             layers_data.append({
@@ -590,6 +688,7 @@ def main():
                 "weight": w_int,
                 "bias": b_int,
                 "output_scale_str": output_scale_str,
+                "res_scale": res_scale,
             })
 
             # Scale propagation: next layer's x_scale = this layer's y_scale

@@ -56,7 +56,9 @@ NUM_LAYERS    = 2
 NUM_LABELS    = 2
 SEQ_LEN       = 128
 
-INPUT_SCALE   = 1.0 / 127.0   # assumed scale for dummy int8 inputs
+# INPUT_SCALE is no longer a global constant.  Each sub-block receives a
+# per-layer x_scale derived from the actual quantisation of the layer before it.
+# See estimate_emb_scale() and estimate_ln_out_scale() below.
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -77,7 +79,47 @@ def quantize_weight(W, target_max=127):
     return W_q, scale
 
 
-def quantize_bias(b, w_scale, in_scale=INPUT_SCALE):
+def estimate_emb_scale():
+    """Compute the per-tensor int8 scale for embedding LN output.
+
+    The embedding pipeline is:
+        raw_emb = word_emb[id] + pos_emb[pos] + type_emb[type]
+        out = gamma * (raw_emb - mean) / sqrt(var + 1e-12) + beta
+
+    We compute the actual LN output range over all word embeddings
+    (at position 0 with type 0) to get a realistic per-tensor scale,
+    rather than using a 3-sigma estimate which underestimates outliers.
+    """
+    word_emb   = load("bert_embeddings_word_embeddings_weight")       # [30522, 128]
+    pos_emb    = load("bert_embeddings_position_embeddings_weight")   # [512, 128]
+    type_emb   = load("bert_embeddings_token_type_embeddings_weight") # [2, 128]
+    emb_ln_gamma = load("bert_embeddings_LayerNorm_weight")          # [128]
+    emb_ln_beta  = load("bert_embeddings_LayerNorm_bias")            # [128]
+
+    # Compute LN output for ALL words at position 0, type 0
+    emb = word_emb + pos_emb[0:1] + type_emb[0:1]       # [30522, 128]
+    mean = emb.mean(axis=-1, keepdims=True)
+    var  = emb.var(axis=-1, keepdims=True)
+    emb_normed = (emb - mean) / np.sqrt(var + 1e-12)
+    emb_out = emb_normed * emb_ln_gamma + emb_ln_beta    # [30522, 128]
+    max_abs = max(float(np.max(np.abs(emb_out))), 1e-6)
+    return max_abs / 127.0
+
+
+def estimate_ln_out_scale(ln_gamma, ln_beta):
+    """Estimate the int8 output scale after sw_layernorm with gamma/beta.
+
+    After layernorm the channel values are approximately gamma*z + beta where
+    z ~ N(0,1).  We use |beta| + 5*|gamma| as a per-channel envelope and take
+    the global max as the per-tensor scale.  The 5-sigma bound covers >99.99%
+    of typical transformer activations, avoiding the underestimate from 3-sigma.
+    """
+    max_abs = float(np.max(np.abs(ln_beta) + 5.0 * np.abs(ln_gamma)))
+    max_abs = max(max_abs, 1e-6)
+    return max_abs / 127.0
+
+
+def quantize_bias(b, w_scale, in_scale):
     """
     Scale the bias into accumulator space.
         b_q = round( b / (w_scale * in_scale) )
@@ -85,6 +127,33 @@ def quantize_bias(b, w_scale, in_scale=INPUT_SCALE):
     denom = w_scale * in_scale
     b_q   = np.round(b / denom).clip(-(2**31), 2**31 - 1).astype(np.int64)
     return b_q
+
+
+def estimate_matmul_out_range(ln_gamma, ln_beta, W_deq, bias, sigma=5.0):
+    """Estimate max absolute output of matmul Y = X@W + b
+    where X comes from LayerNorm with gamma/beta (X[k] ~ N(beta[k], gamma[k]^2)).
+    """
+    mean_y = ln_beta.astype(np.float64) @ W_deq.astype(np.float64) + bias.astype(np.float64)
+    var_y  = (ln_gamma.astype(np.float64)**2) @ (W_deq.astype(np.float64)**2)
+    return max(float(np.max(np.abs(mean_y) + sigma * np.sqrt(np.maximum(var_y, 0)))), 1e-6)
+
+
+def estimate_score_range(ln_gamma, ln_beta, Wq_deq, Wq_b, Wk_deq, Wk_b,
+                         head_dim, num_heads, sigma=5.0):
+    """Estimate max absolute attention score  Q·K^T  per head."""
+    max_score = 0.0
+    for h in range(num_heads):
+        sl = slice(h * head_dim, (h + 1) * head_dim)
+        mq = ln_beta.astype(np.float64) @ Wq_deq[:, sl].astype(np.float64) + Wq_b[sl].astype(np.float64)
+        vq = (ln_gamma.astype(np.float64)**2) @ (Wq_deq[:, sl].astype(np.float64)**2)
+        mk = ln_beta.astype(np.float64) @ Wk_deq[:, sl].astype(np.float64) + Wk_b[sl].astype(np.float64)
+        vk = (ln_gamma.astype(np.float64)**2) @ (Wk_deq[:, sl].astype(np.float64)**2)
+        mean_s = float(np.sum(mq * mk))
+        var_s  = float(np.sum(vq * vk + mq**2 * vk + vq * mk**2))
+        ms = abs(mean_s) + sigma * np.sqrt(max(var_s, 0))
+        if ms > max_score:
+            max_score = ms
+    return max(max_score, 1e-6)
 
 
 def flat_c(arr):
@@ -119,7 +188,7 @@ def gen_params():
         " * Quantised weights for BERT-Tiny (M-FAC/bert-tiny-finetuned-sst2).",
         " * elem_t (int8)  : attention and FFN weights, transposed to gemmini layout.",
         " * acc_t  (int32) : biases in accumulator space.",
-        " * float          : pooler and classifier (run on CPU).",
+        " * float          : LN gamma/beta, pooler and classifier (run on CPU).",
         " */",
         "",
         "#ifndef BERT_PARAMS_H",
@@ -129,12 +198,25 @@ def gen_params():
         "",
     ]
 
+    # ── Compute per-layer input scales for correct bias quantization ──────────
+    # The chain of input scales:
+    #   embeddings → embedding LN → [layer 0 attention] → attn LN
+    #             → [layer 0 FFN] → ffn LN → [layer 1 attention] → attn LN
+    #             → [layer 1 FFN] → ffn LN → pooler (float)
+    # After each sw_layernorm, x_scale = estimate_ln_out_scale(gamma, beta)
+    # --
+    # x_scale for the first attention block = embedding LN output scale
+    cur_x_scale = estimate_emb_scale()
+    print(f"[INFO] embedding output x_scale = {cur_x_scale:.6f}  "
+          f"(max(|beta|+3|gamma|)/127)")
+
     for layer in range(NUM_LAYERS):
         pfx = f"bert_encoder_layer_{layer}"
         L.append(f"/* ── Encoder layer {layer} {'─'*57}*/")
         L.append("")
 
-        # Attention weight matrices: PyTorch [out=H, in=H] → gemmini [in=H, out=H]
+        # ── Attention weight matrices (int8): PyTorch [out=H, in=H] → gemmini [in=H, out=H]
+        w_scales = {}
         for tag, npy_stem in [
             ("Wq", f"{pfx}_attention_self_query_weight"),
             ("Wk", f"{pfx}_attention_self_key_weight"),
@@ -144,64 +226,193 @@ def gen_params():
             W_pt    = load(npy_stem)           # [out=128, in=128]
             W_g     = W_pt.T                   # [in=128, out=128]
             W_q, sc = quantize_weight(W_g)
-            # stash scale for bias companion
-            globals()[f"_sc_l{layer}_{tag}"] = sc
+            w_scales[tag] = sc
             L.append(
                 f"static const elem_t bert_l{layer}_{tag}"
                 f"[{HIDDEN_DIM}][{HIDDEN_DIM}] row_align(1) = {matrix_c(W_q)};"
             )
         L.append("")
 
-        # FFN weight matrices
+        # ── FFN weight matrices (int8)
         # ff1: PyTorch [out=512, in=128] → gemmini [in=128, out=512], flat [128*512]
-        ff1_pt      = load(f"{pfx}_intermediate_dense_weight")  # [512,128]
-        ff1_g       = ff1_pt.T                                   # [128,512]
-        ff1_q, sc1  = quantize_weight(ff1_g)
-        globals()[f"_sc_l{layer}_ff1"] = sc1
+        ff1_pt     = load(f"{pfx}_intermediate_dense_weight")  # [512,128]
+        ff1_g      = ff1_pt.T                                   # [128,512]
+        ff1_q, sc1 = quantize_weight(ff1_g)
+        w_scales["ff1"] = sc1
         L.append(
             f"static const elem_t bert_l{layer}_ff1_w"
             f"[{HIDDEN_DIM * EXPANSION_DIM}] row_align(1) = {flat_c(ff1_q)};"
         )
 
         # ff2: PyTorch [out=128, in=512] → gemmini [in=512, out=128], flat [512*128]
-        ff2_pt      = load(f"{pfx}_output_dense_weight")         # [128,512]
-        ff2_g       = ff2_pt.T                                    # [512,128]
-        ff2_q, sc2  = quantize_weight(ff2_g)
-        globals()[f"_sc_l{layer}_ff2"] = sc2
+        ff2_pt     = load(f"{pfx}_output_dense_weight")         # [128,512]
+        ff2_g      = ff2_pt.T                                    # [512,128]
+        ff2_q, sc2 = quantize_weight(ff2_g)
+        w_scales["ff2"] = sc2
         L.append(
             f"static const elem_t bert_l{layer}_ff2_w"
             f"[{EXPANSION_DIM * HIDDEN_DIM}] row_align(1) = {flat_c(ff2_q)};"
         )
         L.append("")
 
-        # Biases (acc_t = int32)
-        for tag, bias_stem, sc_key in [
-            ("Wq_b",  f"{pfx}_attention_self_query_bias",       f"_sc_l{layer}_Wq"),
-            ("Wk_b",  f"{pfx}_attention_self_key_bias",         f"_sc_l{layer}_Wk"),
-            ("Wv_b",  f"{pfx}_attention_self_value_bias",       f"_sc_l{layer}_Wv"),
-            ("Wo_b",  f"{pfx}_attention_output_dense_bias",     f"_sc_l{layer}_Wo"),
+        # ── Compute per-step output scales (y_scale) for proper ACC_SCALE ────
+        HEAD_DIM = HIDDEN_DIM // 2   # NUM_HEADS = 2
+
+        # Dequantised weights for analytical range estimation
+        Wq_deq = quantize_weight(load(f"{pfx}_attention_self_query_weight").T)[0].astype(np.float64) * w_scales["Wq"]
+        Wk_deq = quantize_weight(load(f"{pfx}_attention_self_key_weight").T)[0].astype(np.float64) * w_scales["Wk"]
+        Wv_deq = quantize_weight(load(f"{pfx}_attention_self_value_weight").T)[0].astype(np.float64) * w_scales["Wv"]
+
+        # Use embedding LN gamma/beta for layer 0, previous ffn LN for later layers
+        if layer == 0:
+            input_ln_gamma = load("bert_embeddings_LayerNorm_weight")
+            input_ln_beta  = load("bert_embeddings_LayerNorm_bias")
+        else:
+            input_ln_gamma = prev_ffn_ln_g
+            input_ln_beta  = prev_ffn_ln_b
+
+        b_Wq = load(f"{pfx}_attention_self_query_bias")
+        b_Wk = load(f"{pfx}_attention_self_key_bias")
+        b_Wv = load(f"{pfx}_attention_self_value_bias")
+        b_Wo = load(f"{pfx}_attention_output_dense_bias")
+
+        y_qkv_max = max(
+            estimate_matmul_out_range(input_ln_gamma, input_ln_beta, Wq_deq, b_Wq),
+            estimate_matmul_out_range(input_ln_gamma, input_ln_beta, Wk_deq, b_Wk),
+            estimate_matmul_out_range(input_ln_gamma, input_ln_beta, Wv_deq, b_Wv),
+        )
+        y_qkv = y_qkv_max / 127.0
+
+        y_scores_max = estimate_score_range(
+            input_ln_gamma, input_ln_beta,
+            Wq_deq, b_Wq, Wk_deq, b_Wk,
+            HEAD_DIM, 2)
+        y_scores = y_scores_max / 127.0
+
+        # Context: softmax concentrates on one token → ctx ≈ V → scale ≈ y_qkv
+        y_ctx = y_qkv
+
+        # ACC_SCALE for each matmul step
+        acc_sc_q   = cur_x_scale * w_scales["Wq"] / y_qkv
+        acc_sc_k   = cur_x_scale * w_scales["Wk"] / y_qkv
+        acc_sc_v   = cur_x_scale * w_scales["Wv"] / y_qkv
+        acc_sc_qkt = y_qkv * y_qkv / y_scores
+        acc_sc_ctx = (1.0 / 127.0) * y_qkv / y_ctx
+
+        # Wo input scale = y_ctx (context vector scale)
+        wo_x_scale = y_ctx
+        wo_acc_to_real = y_ctx * w_scales["Wo"]   # for LN residual
+
+        print(f"[INFO] layer {layer} attn  x_scale = {cur_x_scale:.6f}")
+        print(f"[INFO] layer {layer} y_qkv = {y_qkv:.6f}  y_scores = {y_scores:.6f}  y_ctx = {y_ctx:.6f}")
+        print(f"[INFO] layer {layer} ACC_SCALE q={acc_sc_q:.6g} k={acc_sc_k:.6g} v={acc_sc_v:.6g}")
+        print(f"[INFO] layer {layer} ACC_SCALE qkt={acc_sc_qkt:.6g} ctx={acc_sc_ctx:.6g}")
+
+        # ── Attention biases (acc_t = int32)
+        for tag, bias_stem in [
+            ("Wq_b", f"{pfx}_attention_self_query_bias"),
+            ("Wk_b", f"{pfx}_attention_self_key_bias"),
+            ("Wv_b", f"{pfx}_attention_self_value_bias"),
+            ("Wo_b", f"{pfx}_attention_output_dense_bias"),
         ]:
             b  = load(bias_stem)
-            bq = quantize_bias(b, globals()[sc_key])
+            in_scale = wo_x_scale if tag == "Wo_b" else cur_x_scale
+            bq = quantize_bias(b, w_scales[tag[:-2]], in_scale)
             L.append(
                 f"static const acc_t bert_l{layer}_{tag}"
                 f"[{HIDDEN_DIM}] row_align_acc(1) = {flat_c(bq)};"
             )
 
-        b_ff1  = load(f"{pfx}_intermediate_dense_bias")
-        bq_ff1 = quantize_bias(b_ff1, globals()[f"_sc_l{layer}_ff1"])
+        # ── Attention output LayerNorm (float arrays used by sw_layernorm)
+        attn_ln_g = load(f"{pfx}_attention_output_LayerNorm_weight")  # [128]
+        attn_ln_b = load(f"{pfx}_attention_output_LayerNorm_bias")    # [128]
+        L.append(
+            f"static const float bert_l{layer}_attn_ln_gamma[{HIDDEN_DIM}] = "
+            f"{float_row(attn_ln_g)};"
+        )
+        L.append(
+            f"static const float bert_l{layer}_attn_ln_beta [{HIDDEN_DIM}] = "
+            f"{float_row(attn_ln_b)};"
+        )
+
+        attn_ln_x_scale = estimate_ln_out_scale(attn_ln_g, attn_ln_b)
+        print(f"[INFO] layer {layer} attn_ln_out_scale = {attn_ln_x_scale:.6f}")
+
+        # ── FFN scale estimation ─────────────────────────────────────────
+        ff1_deq = ff1_q.astype(np.float64) * w_scales["ff1"]
+        b_ff1   = load(f"{pfx}_intermediate_dense_bias")
+
+        y_ff1_max = estimate_matmul_out_range(attn_ln_g, attn_ln_b, ff1_deq, b_ff1)
+        y_ff1 = y_ff1_max / 127.0
+        # GELU output: gelu(x) ≈ x for x>0, ≈ 0 for x<0 → output range ≈ 60% of input
+        y_ff1_gelu = 0.6 * y_ff1
+        acc_sc_ff1 = attn_ln_x_scale * w_scales["ff1"] / y_ff1
+
+        # FF2 input scale = y_ff1_gelu
+        ff2_x_scale = y_ff1_gelu
+        ff2_acc_to_real = y_ff1_gelu * w_scales["ff2"]
+
+        print(f"[INFO] layer {layer} y_ff1 = {y_ff1:.6f}  y_ff1_gelu = {y_ff1_gelu:.6f}")
+        print(f"[INFO] layer {layer} ACC_SCALE ff1={acc_sc_ff1:.6g}")
+
+        # ── FFN biases (acc_t = int32)
+        bq_ff1 = quantize_bias(b_ff1, w_scales["ff1"], attn_ln_x_scale)
         L.append(
             f"static const acc_t bert_l{layer}_ff1_b"
             f"[{EXPANSION_DIM}] row_align_acc(1) = {flat_c(bq_ff1)};"
         )
 
         b_ff2  = load(f"{pfx}_output_dense_bias")
-        bq_ff2 = quantize_bias(b_ff2, globals()[f"_sc_l{layer}_ff2"])
+        bq_ff2 = quantize_bias(b_ff2, w_scales["ff2"], ff2_x_scale)
         L.append(
             f"static const acc_t bert_l{layer}_ff2_b"
             f"[{HIDDEN_DIM}] row_align_acc(1) = {flat_c(bq_ff2)};"
         )
+
+        # ── FFN output LayerNorm (float arrays used by sw_layernorm)
+        ffn_ln_g = load(f"{pfx}_output_LayerNorm_weight")   # [128]
+        ffn_ln_b = load(f"{pfx}_output_LayerNorm_bias")     # [128]
+        L.append(
+            f"static const float bert_l{layer}_ffn_ln_gamma[{HIDDEN_DIM}] = "
+            f"{float_row(ffn_ln_g)};"
+        )
+        L.append(
+            f"static const float bert_l{layer}_ffn_ln_beta [{HIDDEN_DIM}] = "
+            f"{float_row(ffn_ln_b)};"
+        )
+
+        ffn_ln_x_scale = estimate_ln_out_scale(ffn_ln_g, ffn_ln_b)
+        print(f"[INFO] layer {layer} ffn_ln_out_scale = {ffn_ln_x_scale:.6f}")
+
+        # ── Per-layer quantization scales ──────────────────────────────────
         L.append("")
+        L.append(f"/* Quantization scales for layer {layer} */")
+        for name, val in [
+            ("acc_scale_q",     acc_sc_q),
+            ("acc_scale_k",     acc_sc_k),
+            ("acc_scale_v",     acc_sc_v),
+            ("acc_scale_qkt",   acc_sc_qkt),
+            ("acc_scale_ctx",   acc_sc_ctx),
+            ("acc_scale_ff1",   acc_sc_ff1),
+            ("attn_ln_out_scale", attn_ln_x_scale),
+            ("ffn_ln_out_scale",  ffn_ln_x_scale),
+            ("wo_acc_to_real",  wo_acc_to_real),
+            ("attn_res_to_real", cur_x_scale),
+            ("ff2_acc_to_real", ff2_acc_to_real),
+            ("ff_res_to_real",  attn_ln_x_scale),
+            ("gelu_in_scale",   y_ff1),
+            ("gelu_out_scale",  y_ff1_gelu),
+            ("pooler_cls_scale", ffn_ln_x_scale),
+        ]:
+            L.append(f"static const float bert_l{layer}_{name} = {val:.10g}f;")
+        L.append("")
+
+        # ── Update scales for next encoder layer
+        cur_x_scale = ffn_ln_x_scale
+        prev_ffn_ln_g = ffn_ln_g
+        prev_ffn_ln_b = ffn_ln_b
+        print(f"[INFO] layer {layer} output x_scale = {cur_x_scale:.6f}  "
+              f"(after ffn LN) → x_scale for layer {layer+1}")
 
     # ── Pooler (CPU float, PyTorch layout [out=128, in=128]) ─────────────────
     L += [
@@ -497,6 +708,7 @@ def gen_params_fp():
 if __name__ == "__main__":
     print("Generating BERT-Tiny C headers from .npy weights...\n")
     gen_params()
+    gen_input()
     gen_params_fp()
     gen_input()
     print("\nDone.  Headers generated:")

@@ -3,12 +3,12 @@
 Extract FP32 weights from HuggingFace MobileNetV2 fine-tuned on CIFAR-10
 (jialicheng/cifar10_mobilenet-v2) and generate:
   - ../mobilenet_cifar10_params_float.h  (FP32 weights, CIFAR-10 spatial dims)
-  - ../cifar10_images.h                  (4 sample CIFAR-10 test images)
+  - ../cifar10_images.h                  (4 sample CIFAR-10 test images, resized to 224x224)
 
 The backbone (conv_1 through conv_52) uses the CIFAR-10 fine-tuned model's
 weights with BatchNorm folded into conv weights.  The FC layer outputs 10 classes.
-All spatial dimensions are recomputed for native 32x32 CIFAR-10 input:
-  32 -> 16 -> 8 -> 4 -> 2 -> 1  (five stride-2 reductions)
+All spatial dimensions are recomputed for 224x224 input (CIFAR-10 images resized):
+  224 -> 112 -> 56 -> 28 -> 14 -> 7  (five stride-2 reductions)
 
 Usage:
     pip install torch transformers torchvision numpy
@@ -22,7 +22,7 @@ import torch
 from transformers import MobileNetV2ForImageClassification
 
 MODEL_NAME = "jialicheng/cifar10_mobilenet-v2"
-INPUT_DIM = 32
+INPUT_DIM = 224   # Model was fine-tuned from 224x224 ImageNet MobileNetV2
 BATCH_SIZE = 4
 NUM_CLASSES = 10
 
@@ -378,18 +378,21 @@ def generate_cifar10_images(output_path, indices=None):
 
     dataset = CIFAR10(root="/tmp/cifar10_data", train=False, download=True)
 
+    from PIL import Image as PILImage
     images = []
     labels = []
     for idx in indices:
         img_pil, label = dataset[idx]
-        img_np = np.array(img_pil, dtype=np.int16)  # [32, 32, 3] uint8→int16
-        img_centered = np.clip(img_np - 128, -128, 127)  # center around 0
+        if INPUT_DIM != 32:
+            img_pil = img_pil.resize((INPUT_DIM, INPUT_DIM), PILImage.BILINEAR)
+        img_np = np.array(img_pil, dtype=np.int16)
+        img_centered = np.clip(img_np - 128, -128, 127)
         images.append(img_centered)
         labels.append(label)
 
     with open(output_path, "w") as f:
-        f.write("#ifndef CIFAR10_IMAGES_H\n")
-        f.write("#define CIFAR10_IMAGES_H\n\n")
+        f.write("#ifndef CIFAR10_IMAGES_224_H\n")
+        f.write("#define CIFAR10_IMAGES_224_H\n\n")
         f.write("#include <include/gemmini_params.h>\n\n")
         f.write(f"// CIFAR-10 test images at indices {indices}\n")
         cifar10_classes = ["airplane","automobile","bird","cat","deer",
@@ -414,7 +417,7 @@ def generate_cifar10_images(output_path, indices=None):
                 f.write("}")
             f.write("}")
         f.write("};\n\n")
-        f.write("#endif // CIFAR10_IMAGES_H\n")
+        f.write("#endif // CIFAR10_IMAGES_224_H\n")
 
     print(f"  Written {output_path}")
     print(f"  Labels: {labels} ({label_names})")
@@ -432,7 +435,7 @@ def main():
     model.eval()
     state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
-    classifier_w = state_dict["classifier.1.weight"]
+    classifier_w = state_dict["classifier.weight"]
     actual_classes = classifier_w.shape[0]
     print(f"Model has {actual_classes} output classes")
     assert actual_classes == NUM_CLASSES, \
@@ -471,7 +474,7 @@ def main():
     write_header(params_path, layers_data, conv_params, buffers)
 
     # Generate CIFAR-10 images
-    images_path = os.path.join(output_dir, "..", "cifar10_images.h")
+    images_path = os.path.join(output_dir, "..", "cifar10_images_224.h")
     images_path = os.path.normpath(images_path)
     print(f"\nGenerating {images_path}...")
     labels = generate_cifar10_images(images_path)

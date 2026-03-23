@@ -7,6 +7,7 @@ tests = \
 	mobilenet_v1 \
 	mobilenet_v1_float \
 	resnet50 \
+	resnet50_v1 \
 	resnet50_float \
 	resnet50_v1_float \
 	mobilenet \

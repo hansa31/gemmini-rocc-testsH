@@ -39,6 +39,90 @@
 /* Dummy input — deterministic int8 pattern, analogous to imagenet/images.h */
 #include "bert_input.h"
 
+/* ── Software fallbacks for SOFTMAX / GELU / LAYERNORM ──────────────────────
+ * These replace the hardware normalization unit when HAS_NORMALIZATIONS is
+ * not defined in the Gemmini configuration.
+ */
+
+/* Clamp to elem_t range */
+static inline elem_t sat_elem(int32_t v) {
+    if (v >  127) return  127;
+    if (v < -128) return -128;
+    return (elem_t)v;
+}
+
+/* Software row-wise softmax on elem_t matrix (in-place).
+ * Uses float arithmetic: for each row, compute exp(x_j)/sum(exp) then
+ * rescale to [0, 127]. */
+static void sw_softmax_inplace(elem_t *mat, int rows, int cols, int stride) {
+    for (int i = 0; i < rows; i++) {
+        elem_t *row = mat + i * stride;
+        /* find max for numerical stability */
+        float mx = (float)row[0];
+        for (int j = 1; j < cols; j++)
+            if ((float)row[j] > mx) mx = (float)row[j];
+        /* exp and sum */
+        float sum = 0.f;
+        for (int j = 0; j < cols; j++) {
+            float e = expf((float)row[j] - mx);
+            sum += e;
+        }
+        /* normalise → [0, 127] */
+        for (int j = 0; j < cols; j++) {
+            float e = expf((float)row[j] - mx);
+            int32_t q = (int32_t)(e / sum * 127.f + 0.5f);
+            row[j] = sat_elem(q);
+        }
+    }
+}
+
+/* Software GELU (approximate) on elem_t matrix (in-place).
+ * GELU(x) ≈ 0.5·x·(1 + tanh(√(2/π)·(x + 0.044715·x³)))
+ * Operates in float, re-quantises back to elem_t.  */
+static void sw_gelu_inplace(elem_t *mat, int rows, int cols, int stride) {
+    const float sqrt_2_over_pi = 0.7978845608f; /* √(2/π) */
+    for (int i = 0; i < rows; i++) {
+        elem_t *row = mat + i * stride;
+        for (int j = 0; j < cols; j++) {
+            float x = (float)row[j];
+            float inner = sqrt_2_over_pi * (x + 0.044715f * x * x * x);
+            float g = 0.5f * x * (1.f + tanhf(inner));
+            row[j] = sat_elem((int32_t)(g > 0 ? g + 0.5f : g - 0.5f));
+        }
+    }
+}
+
+/* Software LayerNorm: acc_t input → elem_t output.
+ * For each row: mean, variance, normalise, scale to elem_t. */
+static void sw_layernorm(const acc_t *in, elem_t *out,
+                         int rows, int cols,
+                         int in_stride, int out_stride) {
+    for (int i = 0; i < rows; i++) {
+        const acc_t *irow = in  + i * in_stride;
+        elem_t      *orow = out + i * out_stride;
+
+        /* mean */
+        double sum = 0.0;
+        for (int j = 0; j < cols; j++) sum += (double)irow[j];
+        double mean = sum / cols;
+
+        /* variance */
+        double var = 0.0;
+        for (int j = 0; j < cols; j++) {
+            double d = (double)irow[j] - mean;
+            var += d * d;
+        }
+        var /= cols;
+        double inv_std = 1.0 / sqrt(var + 1e-12);
+
+        /* normalise → elem_t */
+        for (int j = 0; j < cols; j++) {
+            double normed = ((double)irow[j] - mean) * inv_std;
+            orow[j] = sat_elem((int32_t)(normed > 0 ? normed + 0.5 : normed - 0.5));
+        }
+    }
+}
+
 /* ── BERT-Tiny architecture constants ───────────────────────────────────────── */
 #define HIDDEN_DIM         128
 #define EXPANSION_DIM      512
@@ -88,10 +172,11 @@ static void attention(
     /* Q, K, V projections */
     const elem_t *qkv_weights[3] = {Wq, Wk, Wv};
     const elem_t *qkv_ins[3]     = {input, enc_out, enc_out};
-    const acc_t  *qkv_bs[3]      = {Wq_b, Wk_b, Wk_b};
+    const acc_t  *qkv_bs[3]      = {Wq_b, Wk_b, Wv_b};
     elem_t       *qkv_outs[3]    = {Q_buf, K_buf, V_buf};
 
     for (int i = 0; i < 3; i++) {
+        printf("  QKV proj %d ...\n", i);
         tiled_matmul_auto(seq_len, hidden_dim_compressed, hidden_dim,
             qkv_ins[i],    qkv_weights[i],
             qkv_bs[i],     qkv_outs[i],
@@ -103,8 +188,9 @@ static void attention(
     }
 
     gemmini_fence();
+    printf("  QKV done, computing attention scores...\n");
 
-    /* Attention scores: softmax(Q × K^T) per head */
+    /* Attention scores: Q × K^T → software softmax per head */
     for (int head = 0; head < num_heads; head++) {
         const elem_t *A = Q_buf    + head * hidden_dim_per_head;
         const elem_t *B = K_buf    + head * hidden_dim_per_head;
@@ -114,12 +200,16 @@ static void attention(
             A, B, NULL, C,
             hidden_dim, hidden_dim, 0, seq_len,
             MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
-            SOFTMAX, ACC_SCALE_IDENTITY, 0,
+            NO_ACTIVATION, ACC_SCALE_IDENTITY, 0,
             false, false, true, false, false,
             0, tiled_matmul_type);
+
+        gemmini_fence();
+        sw_softmax_inplace(C, seq_len, seq_len, seq_len);
     }
 
     gemmini_fence();
+    printf("  Attn scores done, computing context vectors...\n");
 
     /* Context vectors: attn × V per head */
     for (int head = 0; head < num_heads; head++) {
@@ -137,6 +227,7 @@ static void attention(
     }
 
     gemmini_fence();
+    printf("  Context done, output projection...\n");
 
     /* Output projection */
     tiled_matmul_auto(seq_len, hidden_dim, hidden_dim_compressed,
@@ -148,12 +239,11 @@ static void attention(
         0, tiled_matmul_type);
 
     gemmini_fence();
+    printf("  Output proj done, LayerNorm + resadd...\n");
 
-    /* LayerNorm + residual add */
-    tiled_norm_auto(seq_len, hidden_dim,
-        (acc_t *)out_buf_acc, (elem_t *)out,
-        ACC_SCALE_IDENTITY,
-        LAYERNORM, tiled_matmul_type);
+    /* Software LayerNorm + residual add */
+    sw_layernorm((acc_t *)out_buf_acc, (elem_t *)out,
+                 seq_len, hidden_dim, hidden_dim, hidden_dim);
 
     tiled_resadd_auto(seq_len, hidden_dim,
         MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
@@ -161,6 +251,7 @@ static void attention(
         false, tiled_matmul_type == CPU ? CPU : WS);
 
     gemmini_fence();
+    printf("  Attention sub-layer complete.\n");
 }
 
 /* ── Feed-forward sub-layer ─────────────────────────────────────────────────
@@ -178,35 +269,37 @@ static void ffn(
         const acc_t  *ff1_b, const acc_t  *ff2_b,
         elem_t *out_buf, acc_t *out_buf_acc)
 {
-    /* FF1 + GELU → out_buf [seq_len × expansion_dim] */
+    printf("  FFN: FF1 + GELU...\n");
+    /* FF1 → out_buf [seq_len × expansion_dim], then software GELU */
     tiled_matmul_auto(seq_len, expansion_dim, hidden_dim,
         input, ff1_w, ff1_b, out_buf,
         hidden_dim, expansion_dim, expansion_dim, expansion_dim,
         MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
-        IGELU, ACC_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
+        NO_ACTIVATION, ACC_SCALE_IDENTITY, 0,
         true, false, false, false, false,
         0, tiled_matmul_type);
 
     gemmini_fence();
+    sw_gelu_inplace(out_buf, seq_len, expansion_dim, expansion_dim);
+
+    gemmini_fence();
+    printf("  FFN: FF1 done, FF2...\n");
 
     /* FF2 → out_buf_acc [seq_len × hidden_dim] */
     tiled_matmul_auto(seq_len, hidden_dim, expansion_dim,
         out_buf, ff2_w, ff2_b, out_buf_acc,
-        expansion_dim, hidden_dim, expansion_dim, expansion_dim,
+        expansion_dim, hidden_dim, hidden_dim, hidden_dim,
         MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
         NO_ACTIVATION, ACC_SCALE_IDENTITY, 0,
         true, false, false, true, false,
         0, tiled_matmul_type);
 
     gemmini_fence();
+    printf("  FFN: FF2 done, LayerNorm + resadd...\n");
 
-    /* LayerNorm + residual add */
-    tiled_norm_auto(seq_len, hidden_dim,
-        (acc_t *)out_buf_acc, (elem_t *)out,
-        ACC_SCALE_IDENTITY,
-        LAYERNORM, tiled_matmul_type);
-
-    gemmini_fence();
+    /* Software LayerNorm + residual add */
+    sw_layernorm((acc_t *)out_buf_acc, (elem_t *)out,
+                 seq_len, hidden_dim, hidden_dim, hidden_dim);
 
     tiled_resadd_auto(seq_len, hidden_dim,
         MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY,
@@ -214,6 +307,7 @@ static void ffn(
         false, tiled_matmul_type == CPU ? CPU : WS);
 
     gemmini_fence();
+    printf("  FFN sub-layer complete.\n");
 }
 
 /* ── Scratch buffers (BSS, zero-initialised by ELF loader) ──────────────────
@@ -267,6 +361,9 @@ int main(int argc, char *argv[])
      * Real inference: token_ids → word+pos+type embeddings → LayerNorm → here
      */
     memcpy(layer_ping, bert_input, sizeof(bert_input));
+    printf("Input loaded: first few values = %d %d %d %d\n",
+           (int)layer_ping[0][0], (int)layer_ping[0][1],
+           (int)layer_ping[0][2], (int)layer_ping[0][3]);
 
     /* ── Per-layer weight pointer tables ────────────────────────────────────
      * Maps layer index to the named arrays from bert_params.h.
@@ -292,6 +389,7 @@ int main(int argc, char *argv[])
 
     for (int layer = 0; layer < NUM_LAYERS; layer++) {
         uint64_t layer_start = read_cycles();
+        printf("Layer %d: starting attention...\n", layer);
 
         attention(
             HIDDEN_DIM, EXPANSION_DIM, NUM_HEADS, SEQ_LEN, COMPRESSION_FACTOR,
@@ -304,6 +402,8 @@ int main(int argc, char *argv[])
             layer_Wv_b[layer], layer_Wo_b[layer],
             (elem_t *)Q_buf, (elem_t *)K_buf, (elem_t *)V_buf,
             (elem_t *)attn_buf, (elem_t *)ffn_out_buf, (acc_t *)acc_buf);
+
+        printf("Layer %d: attention done, starting ffn...\n", layer);
 
         ffn(
             HIDDEN_DIM, EXPANSION_DIM, SEQ_LEN,

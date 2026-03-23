@@ -46,6 +46,8 @@ int main (int argc, char * argv[]) {
     }
 #endif
 
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     gemmini_flush(0);
 
     enum tiled_matmul_type_t tiled_matmul_type = WS;
@@ -131,8 +133,6 @@ int main (int argc, char * argv[]) {
     int window_top1 = 0;
     int window_top5 = 0;
     int window_top10 = 0;
-
-    setvbuf(stdout, NULL, _IONBF, 0);
 
     // ===== A/B TEST: Run images.h first to establish baseline =====
     printf("\n===== A/B TEST: Running images.h reference data =====\n");

@@ -60,6 +60,11 @@ tests = \
 	global_average \
 	gemmini_counter \
 	template \
+	bench_gemm_small \
+	bench_gemm_medium \
+	bench_gemm_large \
+	bench_gemm_bert \
+	bench_gemm_resnet \
 
 tests_baremetal = $(tests:=-baremetal)
 

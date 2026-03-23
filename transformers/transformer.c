@@ -37,7 +37,7 @@ void attention(int hidden_dim, int expansion_dim, int num_heads, int seq_len,
     for (int i = 0; i < qkv_matmuls_n; i++) {
         const elem_t * qkv_weights[] = {Wq, Wk, Wv};
         const elem_t * qkv_ins[] = {input, enc_out, enc_out};
-        const acc_t * qkv_bs[] = {Wq_b, Wk_b, Wk_b};
+        const acc_t * qkv_bs[] = {Wq_b, Wk_b, Wv_b};
         elem_t * qkv_outs[] = {Q_buf, K_buf, V_buf};
 
         const elem_t * qkv_w = qkv_weights[i];
@@ -165,7 +165,7 @@ void ffn(int hidden_dim, int expansion_dim, int seq_len,
     tiled_matmul_auto(seq_len, hidden_dim, expansion_dim, 
         /*A=*/ out_buf, /*B=*/ ff2_w,
         /*D=*/ ff2_b, /*C=*/ out_buf_acc,
-        /*stride_A=*/expansion_dim, /*stride_B=*/hidden_dim, /*stride_D=*/expansion_dim, /*stride_C=*/expansion_dim,
+        /*stride_A=*/expansion_dim, /*stride_B=*/hidden_dim, /*stride_D=*/hidden_dim, /*stride_C=*/hidden_dim,
         MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY, MVIN_SCALE_IDENTITY,
         NO_ACTIVATION, /*scale=*/ ACC_SCALE_IDENTITY, /*bert_scale=*/ 0,
         /*repeating_bias=*/ true,

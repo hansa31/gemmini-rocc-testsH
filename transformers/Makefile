@@ -3,6 +3,7 @@ include $(abs_top_srcdir)/Makefrag
 tests = \
 	bert-tiny-sst2-fp \
 	bert-tiny-sst2 \
+	bert-tiny-sst2-stream \
 	transformer \
 
 tests_baremetal = $(tests:=-baremetal)
