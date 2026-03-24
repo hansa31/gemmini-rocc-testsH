@@ -19,7 +19,7 @@ Usage:
 import os
 import numpy as np
 import torch
-from transformers import ResNetForImageClassification
+from huggingface_hub import hf_hub_download
 
 MODEL_NAME = "edadaltocg/resnet50_cifar10"
 INPUT_DIM = 32
@@ -376,14 +376,59 @@ def write_fc_layer(f, entry):
 
 
 # ---------------------------------------------------------------------------
+# Key remapping: torchvision/timm -> HuggingFace format
+# ---------------------------------------------------------------------------
+# The edadaltocg/resnet50_cifar10 checkpoint uses torchvision-style keys
+# (conv1, bn1, layer1.0.conv1, etc.) but the rest of this script expects
+# HuggingFace-style keys (resnet.embedder.embedder.convolution.weight, etc.).
+
+def _remap_torchvision_to_hf(sd):
+    """Remap torchvision ResNet state_dict keys to HuggingFace format."""
+    mapped = {}
+    for k, v in sd.items():
+        new_key = None
+        if k.startswith('conv1.'):
+            suffix = k[len('conv1.'):]
+            new_key = f"resnet.embedder.embedder.convolution.{suffix}"
+        elif k.startswith('bn1.'):
+            suffix = k[len('bn1.'):]
+            new_key = f"resnet.embedder.embedder.normalization.{suffix}"
+        elif k.startswith('fc.'):
+            suffix = k[len('fc.'):]
+            new_key = f"classifier.1.{suffix}"
+        elif k.startswith('layer'):
+            parts = k.split('.')
+            stage = int(parts[0][5:]) - 1   # layer1 -> stage 0
+            block = int(parts[1])
+            if parts[2] == 'downsample':
+                sub_type = 'convolution' if parts[3] == '0' else 'normalization'
+                suffix = '.'.join(parts[4:])
+                new_key = (f"resnet.encoder.stages.{stage}.layers.{block}"
+                           f".shortcut.{sub_type}.{suffix}")
+            elif parts[2].startswith('conv'):
+                conv_idx = int(parts[2][4:]) - 1   # conv1 -> 0
+                suffix = '.'.join(parts[3:])
+                new_key = (f"resnet.encoder.stages.{stage}.layers.{block}"
+                           f".layer.{conv_idx}.convolution.{suffix}")
+            elif parts[2].startswith('bn'):
+                bn_idx = int(parts[2][2:]) - 1      # bn1 -> 0
+                suffix = '.'.join(parts[3:])
+                new_key = (f"resnet.encoder.stages.{stage}.layers.{block}"
+                           f".layer.{bn_idx}.normalization.{suffix}")
+        if new_key is not None:
+            mapped[new_key] = v
+    return mapped
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main():
     print(f"Loading {MODEL_NAME} from HuggingFace...")
-    model = ResNetForImageClassification.from_pretrained(MODEL_NAME)
-    model.eval()
-    state_dict = {k: v.detach().cpu().float() for k, v in model.state_dict().items()}
+    ckpt_path = hf_hub_download(repo_id=MODEL_NAME, filename="pytorch_model.bin")
+    raw_sd = torch.load(ckpt_path, map_location='cpu', weights_only=True)
+    state_dict = {k: v.float() for k, v in _remap_torchvision_to_hf(raw_sd).items()}
 
     classifier_w = state_dict["classifier.1.weight"]
     actual_classes = classifier_w.shape[0]

@@ -39,6 +39,13 @@ static inline uint64_t read_wall_time(void) {
 #endif
 
 int main() {
+#ifndef BAREMETAL
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+      perror("mlockall failed");
+      exit(1);
+    }
+#endif
+
     printf("=== %s Benchmark ===\n", BENCH_NAME);
     printf("Dimensions: M=%d, N=%d, K=%d\n", MAT_DIM_I, MAT_DIM_J, MAT_DIM_K);
     printf("Total FLOPs: %lu\n", (unsigned long)(2UL * MAT_DIM_I * MAT_DIM_J * MAT_DIM_K));

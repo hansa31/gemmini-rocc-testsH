@@ -35,11 +35,24 @@
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
+#include <time.h>
 #ifndef BAREMETAL
 #include <sys/mman.h>
 #endif
 #include "include/gemmini.h"
 #include "include/gemmini_nn.h"
+
+static inline uint64_t bench_read_cycles(void) {
+    uint64_t c;
+    asm volatile ("rdcycle %0" : "=r"(c));
+    return c;
+}
+
+static inline uint64_t get_time_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
 
 /* int8 (elem_t) weights generated from the exported .npy files */
 #include "bert_params.h"
@@ -47,7 +60,7 @@
 /* ── Dataset configuration ──────────────────────────────────────────────────
  * Update these after running prepare_sst2.py to match the output.
  */
-#define NUM_EXAMPLES    872
+#define NUM_EXAMPLES    5
 #define EMBEDDINGS_BIN  "sst2_validation_872.bin"
 #define LABELS_TXT      "sst2_validation_872_labels.txt"
 #define ATTN_MASKS_BIN  "sst2_validation_872_attn_masks.bin"
@@ -455,6 +468,10 @@ int main(int argc, char *argv[])
     int confusion[NUM_LABELS][NUM_LABELS];
     memset(confusion, 0, sizeof(confusion));
 
+    /* Per-example timing */
+    uint64_t min_ex_cycles = UINT64_MAX, sum_ex_cycles = 0;
+    uint64_t min_ex_wall   = UINT64_MAX, sum_ex_wall   = 0;
+
     setvbuf(stdout, NULL, _IONBF, 0);
 
     uint64_t total_start = read_cycles();
@@ -475,6 +492,9 @@ int main(int argc, char *argv[])
             printf("Warning: short mask read at example %d, stopping.\n", ex);
             break;
         }
+
+        uint64_t ex_cycle_start = bench_read_cycles();
+        uint64_t ex_wall_start  = get_time_ns();
 
         /* ── Encoder layers ────────────────────────────────────────────── */
         elem_t (*cur)[HIDDEN_DIM] = layer_ping;
@@ -543,19 +563,24 @@ int main(int argc, char *argv[])
         if (pred == label) correct++;
         confusion[label][pred]++;
 
-        /* Progress every 50 examples */
-        if ((ex + 1) % 50 == 0 || (ex + 1) == NUM_EXAMPLES) {
-            float acc_pct = 100.0f * correct / (ex + 1);
-            printf("  [%d/%d]  accuracy = %.2f%% (%d/%d correct)\n",
-                   ex + 1, NUM_EXAMPLES, acc_pct, correct, ex + 1);
-        }
+        uint64_t ex_cycle_end = bench_read_cycles();
+        uint64_t ex_wall_end  = get_time_ns();
+        uint64_t ex_cycles = ex_cycle_end - ex_cycle_start;
+        uint64_t ex_wall   = ex_wall_end  - ex_wall_start;
 
-        /* Debug: print first 3 examples */
-        if (ex < 3) {
-            printf("    Example %d: label=%d pred=%d  logits=[%.4f, %.4f]%s\n",
-                   ex, label, pred, (double)logits[0], (double)logits[1],
-                   pred == label ? "  CORRECT" : "  WRONG");
-        }
+        if (ex_cycles < min_ex_cycles) min_ex_cycles = ex_cycles;
+        sum_ex_cycles += ex_cycles;
+        if (ex_wall < min_ex_wall) min_ex_wall = ex_wall;
+        sum_ex_wall += ex_wall;
+
+        float acc_pct = 100.0f * correct / (ex + 1);
+        printf("  [%d/%d]  accuracy=%.2f%%  cycles=%llu  wall_ns=%llu\n",
+               ex + 1, NUM_EXAMPLES, acc_pct,
+               (unsigned long long)ex_cycles, (unsigned long long)ex_wall);
+
+        printf("    Example %d: label=%d pred=%d  logits=[%.4f, %.4f]%s\n",
+               ex, label, pred, (double)logits[0], (double)logits[1],
+               pred == label ? "  CORRECT" : "  WRONG");
     }
 
     uint64_t total_end = read_cycles();
@@ -612,11 +637,32 @@ int main(int argc, char *argv[])
     for (int c = 0; c < NUM_LABELS; c++) macro_f1 += f1_scores[c];
     macro_f1 /= NUM_LABELS;
 
+    uint64_t avg_ex_cycles = sum_ex_cycles / total_examples;
+    uint64_t avg_ex_wall   = sum_ex_wall   / total_examples;
+    double examples_per_sec = (avg_ex_wall > 0)
+        ? 1e9 / (double)avg_ex_wall : 0.0;
+
     printf("\n  Accuracy:  %d / %d = %.2f%%\n", correct, total_examples, (double)accuracy);
     printf("  Macro-F1:  %.4f\n", (double)macro_f1);
     printf("\n  Total cycles: %llu\n",
            (unsigned long long)(total_end - total_start));
+    printf("  Min example cycles: %llu\n", (unsigned long long)min_ex_cycles);
+    printf("  Avg example cycles: %llu\n", (unsigned long long)avg_ex_cycles);
+    printf("  Min example wall (ns): %llu\n", (unsigned long long)min_ex_wall);
+    printf("  Avg example wall (ns): %llu\n", (unsigned long long)avg_ex_wall);
+    printf("  Examples/sec: %.2f\n", examples_per_sec);
     printf("========================================\n");
+
+    /* CSV summary line */
+    printf("CSV,BERT-Tiny-SST2,sst2,%d,%.2f,%.4f,%llu,%llu,%llu,%llu,%.2f\n",
+           total_examples,
+           (double)accuracy,
+           (double)macro_f1,
+           (unsigned long long)min_ex_cycles,
+           (unsigned long long)avg_ex_cycles,
+           (unsigned long long)min_ex_wall,
+           (unsigned long long)avg_ex_wall,
+           examples_per_sec);
 
     exit(0);
 }

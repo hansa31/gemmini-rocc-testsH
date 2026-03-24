@@ -51,6 +51,12 @@ static inline uint64_t get_time_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
+static inline uint64_t bench_read_cycles(void) {
+    uint64_t c;
+    asm volatile ("rdcycle %0" : "=r"(c));
+    return c;
+}
+
 // CIFAR-10 class names
 static const char *class_names[10] = {
     "airplane", "automobile", "bird", "cat",  "deer",
@@ -859,7 +865,10 @@ int main(int argc, char *argv[])
     int images_processed    = 0;
 
     int num_batches = NUM_IMAGES / BATCH_SIZE;
-    uint64_t total_inference_ns = 0;
+
+    uint64_t min_batch_cycles = UINT64_MAX, min_batch_wall = UINT64_MAX;
+    uint64_t sum_batch_cycles = 0, sum_batch_wall = 0;
+    float best_window_top1 = 0.0f, best_window_top5 = 0.0f;
 
     setvbuf(stdout, NULL, _IONBF, 0);
 
@@ -889,9 +898,24 @@ int main(int argc, char *argv[])
             }
         }
 
-        uint64_t t0 = get_time_ns();
+        uint64_t cycle_start = bench_read_cycles();
+        uint64_t wall_start = get_time_ns();
+
         run_resnet50_batch((const elem_t *)image_batch, matmul_type);
-        total_inference_ns += get_time_ns() - t0;
+
+        uint64_t cycle_end = bench_read_cycles();
+        uint64_t wall_end = get_time_ns();
+
+        uint64_t batch_cycles = cycle_end - cycle_start;
+        uint64_t batch_wall = wall_end - wall_start;
+        if (batch_cycles < min_batch_cycles) min_batch_cycles = batch_cycles;
+        if (batch_wall < min_batch_wall) min_batch_wall = batch_wall;
+        sum_batch_cycles += batch_cycles;
+        sum_batch_wall += batch_wall;
+
+        printf("Batch %d/%d  Cycles: %llu  Time: %llu ns\n",
+               batch_idx + 1, num_batches,
+               (unsigned long long)batch_cycles, (unsigned long long)batch_wall);
 
         // Evaluate predictions
         for (int b = 0; b < BATCH_SIZE; b++) {
@@ -916,6 +940,10 @@ int main(int argc, char *argv[])
                    100.0f * top5_correct_window / window_size,
                    100.0f * top1_correct_total  / images_processed,
                    100.0f * top5_correct_total  / images_processed);
+            float w_top1 = 100.0f * top1_correct_window / window_size;
+            float w_top5 = 100.0f * top5_correct_window / window_size;
+            if (w_top1 > best_window_top1) best_window_top1 = w_top1;
+            if (w_top5 > best_window_top5) best_window_top5 = w_top5;
             top1_correct_window = 0;
             top5_correct_window = 0;
         }
@@ -925,18 +953,32 @@ done:
     fclose(img_fp);
     fclose(lbl_fp);
 
+    uint64_t avg_batch_cycles = (num_batches > 0) ? sum_batch_cycles / num_batches : 0;
+    uint64_t avg_batch_wall = (num_batches > 0) ? sum_batch_wall / num_batches : 0;
+    float final_top1 = (images_processed > 0) ? 100.0f * top1_correct_total / images_processed : 0;
+    float final_top5 = (images_processed > 0) ? 100.0f * top5_correct_total / images_processed : 0;
+    double imgs_per_sec = (avg_batch_wall > 0) ? (double)BATCH_SIZE * 1e9 / avg_batch_wall : 0;
+
     printf("\n=================================================================\n");
     printf("  Final Results (%d images processed)\n", images_processed);
     printf("  Top-1 accuracy: %d / %d = %.2f%%\n",
-           top1_correct_total, images_processed,
-           100.0f * top1_correct_total / images_processed);
+           top1_correct_total, images_processed, final_top1);
     printf("  Top-5 accuracy: %d / %d = %.2f%%\n",
-           top5_correct_total, images_processed,
-           100.0f * top5_correct_total / images_processed);
-    if (images_processed > 0)
-        printf("  Avg inference time per batch: %.3f ms\n",
-               (double)total_inference_ns / num_batches / 1e6);
+           top5_correct_total, images_processed, final_top5);
+    printf("  Best window top-1: %.1f%%  top-5: %.1f%%\n", best_window_top1, best_window_top5);
+    printf("  Min batch cycles: %llu  Avg batch cycles: %llu\n",
+           (unsigned long long)min_batch_cycles, (unsigned long long)avg_batch_cycles);
+    printf("  Min batch wall: %llu ns  Avg batch wall: %llu ns\n",
+           (unsigned long long)min_batch_wall, (unsigned long long)avg_batch_wall);
+    printf("  Throughput: %.2f images/sec\n", imgs_per_sec);
     printf("=================================================================\n");
+
+    printf("\nCSV,ResNet50-CIFAR10-Float,cifar10,32x32,%d,%.2f,%.2f,0.00,%.1f,%.1f,%llu,%llu,%llu,%llu,%.2f\n",
+           images_processed, final_top1, final_top5,
+           best_window_top1, best_window_top5,
+           (unsigned long long)min_batch_cycles, (unsigned long long)avg_batch_cycles,
+           (unsigned long long)min_batch_wall, (unsigned long long)avg_batch_wall,
+           imgs_per_sec);
 
     return 0;
 }

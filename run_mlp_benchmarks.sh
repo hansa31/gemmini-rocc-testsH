@@ -1,29 +1,20 @@
-#!/bin/bash
+#!/bin/sh
 # Runs the 5 MLP benchmark binaries and records per-layer cycles, total cycles,
 # and wall time into mlp_bench_results.csv in the same directory as this script.
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN_DIR="$DIR/mlps"
 CSV_FILE="$DIR/mlp_bench_results.csv"
 
-BINARIES=(
-    mlp_bert_ffn-linux
-    mlp_dlrm_bottom-linux
-    mlp_dlrm_top-linux
-    mlp_gpt2_ffn-linux
-    mlp_lenet300-linux
-)
-
 # Write header (overwrites any previous run)
-{
-    echo "# Gemmini MLP Benchmark Results — $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "benchmark,total_cycles,wall_ns,layer_0_cycles,layer_1_cycles,layer_2_cycles,layer_3_cycles"
-} > "$CSV_FILE"
+echo "# Gemmini MLP Benchmark Results -- $(date '+%Y-%m-%d %H:%M:%S')" > "$CSV_FILE"
+echo "benchmark,total_cycles,wall_ns,layer_0_cycles,layer_1_cycles,layer_2_cycles,layer_3_cycles" >> "$CSV_FILE"
 
-for bin in "${BINARIES[@]}"; do
-    BIN_PATH="$DIR/$bin"
+for bin in mlp_bert_ffn-linux mlp_dlrm_bottom-linux mlp_dlrm_top-linux mlp_gpt2_ffn-linux mlp_lenet300-linux; do
+    BIN_PATH="$BIN_DIR/$bin"
 
-    if [[ ! -x "$BIN_PATH" ]]; then
-        echo "SKIP: $bin not found or not executable in $DIR" >&2
+    if [ ! -x "$BIN_PATH" ]; then
+        echo "SKIP: $bin not found or not executable in $BIN_DIR" >&2
         continue
     fi
 
@@ -32,14 +23,14 @@ for bin in "${BINARIES[@]}"; do
     OUTPUT="$("$BIN_PATH" 2>&1)"
     EXIT_CODE=$?
 
-    if [[ $EXIT_CODE -ne 0 ]]; then
+    if [ $EXIT_CODE -ne 0 ]; then
         echo "WARNING: $bin exited with code $EXIT_CODE" >&2
     fi
 
     # Parse total cycles
     TOTAL_CYCLES=$(printf '%s\n' "$OUTPUT" | grep -i 'Overall cycles taken' | grep -oE '[0-9]+' | tail -1)
 
-    if [[ -z "$TOTAL_CYCLES" ]]; then
+    if [ -z "$TOTAL_CYCLES" ]; then
         echo "WARNING: no cycle count found for $bin" >&2
         continue
     fi
@@ -54,7 +45,7 @@ for bin in "${BINARIES[@]}"; do
     L3=$(printf '%s\n' "$OUTPUT" | grep -i 'Cycles taken in layer 3' | grep -oE '[0-9]+' | tail -1)
 
     # Strip the "-linux" suffix for the benchmark name
-    BENCH_NAME="${bin%-linux}"
+    BENCH_NAME=$(echo "$bin" | sed 's/-linux$//')
 
     ROW="$BENCH_NAME,$TOTAL_CYCLES,$WALL_NS,$L0,$L1,$L2,$L3"
     echo "$ROW" >> "$CSV_FILE"
