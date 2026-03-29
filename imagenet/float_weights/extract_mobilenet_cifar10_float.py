@@ -3,12 +3,21 @@
 Extract FP32 weights from HuggingFace MobileNetV2 fine-tuned on CIFAR-10
 (jialicheng/cifar10_mobilenet-v2) and generate:
   - ../mobilenet_cifar10_params_float.h  (FP32 weights, CIFAR-10 spatial dims)
+<<<<<<< HEAD
   - ../cifar10_images.h                  (4 sample CIFAR-10 test images)
 
 The backbone (conv_1 through conv_52) uses the CIFAR-10 fine-tuned model's
 weights with BatchNorm folded into conv weights.  The FC layer outputs 10 classes.
 All spatial dimensions are recomputed for native 32x32 CIFAR-10 input:
   32 -> 16 -> 8 -> 4 -> 2 -> 1  (five stride-2 reductions)
+=======
+  - ../cifar10_images.h                  (4 sample CIFAR-10 test images, resized to 224x224)
+
+The backbone (conv_1 through conv_52) uses the CIFAR-10 fine-tuned model's
+weights with BatchNorm folded into conv weights.  The FC layer outputs 10 classes.
+All spatial dimensions are recomputed for 224x224 input (CIFAR-10 images resized):
+  224 -> 112 -> 56 -> 28 -> 14 -> 7  (five stride-2 reductions)
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 
 Usage:
     pip install torch transformers torchvision numpy
@@ -22,7 +31,11 @@ import torch
 from transformers import MobileNetV2ForImageClassification
 
 MODEL_NAME = "jialicheng/cifar10_mobilenet-v2"
+<<<<<<< HEAD
 INPUT_DIM = 32
+=======
+INPUT_DIM = 224   # Model was fine-tuned from 224x224 ImageNet MobileNetV2
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 BATCH_SIZE = 4
 NUM_CLASSES = 10
 
@@ -150,11 +163,22 @@ def compute_buffers(conv_params):
 
 def build_layer_mapping():
     mapping = []
+<<<<<<< HEAD
     mapping.append(("conv_1", "mobilenet_v2.conv_stem", "conv"))
     mapping.append(("conv_dw_2", "mobilenet_v2.layer.0.conv_3x3", "dw"))
     mapping.append(("conv_3", "mobilenet_v2.layer.0.reduce_1x1", "conv"))
     gemmini_idx = 4
     for hf_layer_idx in range(1, 17):
+=======
+    # 1) Initial conv stem — 3 sub-layers inside mobilenet_v2.conv_stem
+    mapping.append(("conv_1",    "mobilenet_v2.conv_stem.first_conv", "conv"))
+    mapping.append(("conv_dw_2", "mobilenet_v2.conv_stem.conv_3x3",   "dw"))
+    mapping.append(("conv_3",    "mobilenet_v2.conv_stem.reduce_1x1", "conv"))
+    # 2) Inverted residual blocks
+    # layer.0..15 → gemmini conv_4..conv_51 (each block: expand + dw + project)
+    gemmini_idx = 4
+    for hf_layer_idx in range(0, 16):
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         prefix = f"mobilenet_v2.layer.{hf_layer_idx}"
         mapping.append((f"conv_{gemmini_idx}", f"{prefix}.expand_1x1", "conv"))
         gemmini_idx += 1
@@ -226,8 +250,13 @@ def get_conv_bn_params(state_dict, prefix):
 
 def extract_layer(state_dict, gemmini_name, hf_prefix, layer_type):
     if layer_type == "fc":
+<<<<<<< HEAD
         fc_w = state_dict["classifier.1.weight"].numpy()   # [10, 1280]
         fc_b = state_dict["classifier.1.bias"].numpy()      # [10]
+=======
+        fc_w = state_dict["classifier.weight"].numpy()   # [10, 1280]
+        fc_b = state_dict["classifier.bias"].numpy()      # [10]
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         bias_2d = np.tile(fc_b.reshape(-1, 1), (1, BATCH_SIZE))
         return fc_w, bias_2d
 
@@ -375,18 +404,34 @@ def generate_cifar10_images(output_path, indices=None):
 
     dataset = CIFAR10(root="/tmp/cifar10_data", train=False, download=True)
 
+<<<<<<< HEAD
+=======
+    from PIL import Image as PILImage
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     images = []
     labels = []
     for idx in indices:
         img_pil, label = dataset[idx]
+<<<<<<< HEAD
         img_np = np.array(img_pil, dtype=np.int16)  # [32, 32, 3] uint8→int16
         img_centered = np.clip(img_np - 128, -128, 127)  # center around 0
+=======
+        if INPUT_DIM != 32:
+            img_pil = img_pil.resize((INPUT_DIM, INPUT_DIM), PILImage.BILINEAR)
+        img_np = np.array(img_pil, dtype=np.int16)
+        img_centered = np.clip(img_np - 128, -128, 127)
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         images.append(img_centered)
         labels.append(label)
 
     with open(output_path, "w") as f:
+<<<<<<< HEAD
         f.write("#ifndef CIFAR10_IMAGES_H\n")
         f.write("#define CIFAR10_IMAGES_H\n\n")
+=======
+        f.write("#ifndef CIFAR10_IMAGES_224_H\n")
+        f.write("#define CIFAR10_IMAGES_224_H\n\n")
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         f.write("#include <include/gemmini_params.h>\n\n")
         f.write(f"// CIFAR-10 test images at indices {indices}\n")
         cifar10_classes = ["airplane","automobile","bird","cat","deer",
@@ -411,7 +456,11 @@ def generate_cifar10_images(output_path, indices=None):
                 f.write("}")
             f.write("}")
         f.write("};\n\n")
+<<<<<<< HEAD
         f.write("#endif // CIFAR10_IMAGES_H\n")
+=======
+        f.write("#endif // CIFAR10_IMAGES_224_H\n")
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 
     print(f"  Written {output_path}")
     print(f"  Labels: {labels} ({label_names})")
@@ -429,7 +478,11 @@ def main():
     model.eval()
     state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
+<<<<<<< HEAD
     classifier_w = state_dict["classifier.1.weight"]
+=======
+    classifier_w = state_dict["classifier.weight"]
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     actual_classes = classifier_w.shape[0]
     print(f"Model has {actual_classes} output classes")
     assert actual_classes == NUM_CLASSES, \
@@ -468,7 +521,11 @@ def main():
     write_header(params_path, layers_data, conv_params, buffers)
 
     # Generate CIFAR-10 images
+<<<<<<< HEAD
     images_path = os.path.join(output_dir, "..", "cifar10_images.h")
+=======
+    images_path = os.path.join(output_dir, "..", "cifar10_images_224.h")
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     images_path = os.path.normpath(images_path)
     print(f"\nGenerating {images_path}...")
     labels = generate_cifar10_images(images_path)

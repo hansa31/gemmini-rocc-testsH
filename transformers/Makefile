@@ -3,6 +3,10 @@ include $(abs_top_srcdir)/Makefrag
 tests = \
 	bert-tiny-sst2-fp \
 	bert-tiny-sst2 \
+<<<<<<< HEAD
+=======
+	bert-tiny-sst2-stream \
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 	transformer \
 
 tests_baremetal = $(tests:=-baremetal)

@@ -1,0 +1,246 @@
+MobileNetV2 ImageNet INT8 Extraction Comparison Report
+Reference: /home/hansa/Desktop/chipyard/generators/gemmini/software/gemmini-rocc-tests/imagenet/mobilenet_params.h
+
+======================================================================
+Variant: pow2_x1.0
+======================================================================
+  conv_1           W:✗ 788/864 differ (max_diff=177)           B:6% within 1% (max_diff=7860)              scale:✗ ref=7.8125e-03 gen=5.0000e-01
+  conv_10          W:✗ 3373/3456 differ (max_diff=116)         B:0% within 1% (max_diff=6553)              scale:✗ ref=1.5625e-02 gen=7.8125e-03
+  conv_12          W:✗ 4539/4608 differ (max_diff=150)         B:3% within 1% (max_diff=23651)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_13          W:✗ 6032/6144 differ (max_diff=146)         B:1% within 1% (max_diff=13517)             scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_15          W:✗ 6038/6144 differ (max_diff=142)         B:3% within 1% (max_diff=17093)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_16          W:✗ 6036/6144 differ (max_diff=135)         B:1% within 1% (max_diff=16260)             scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_18          W:✗ 6055/6144 differ (max_diff=155)         B:3% within 1% (max_diff=16137)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_19          W:✗ 6036/6144 differ (max_diff=150)         B:0% within 1% (max_diff=10504)             scale:✓ exact
+  conv_21          W:✗ 12047/12288 differ (max_diff=123)       B:0% within 1% (max_diff=21562)             scale:✓ exact
+  conv_22          W:✗ 24090/24576 differ (max_diff=144)       B:5% within 1% (max_diff=13107)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_24          W:✗ 23981/24576 differ (max_diff=114)       B:6% within 1% (max_diff=18978)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_25          W:✗ 24186/24576 differ (max_diff=152)       B:1% within 1% (max_diff=14789)             scale:✗ ref=1.9531e-03 gen=3.9062e-03
+  conv_27          W:✗ 24061/24576 differ (max_diff=143)       B:2% within 1% (max_diff=18981)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_28          W:✗ 24223/24576 differ (max_diff=156)       B:3% within 1% (max_diff=19578)             scale:✓ exact
+  conv_3           W:✗ 495/512 differ (max_diff=138)           B:0% within 1% (max_diff=7881)              scale:✓ exact
+  conv_30          W:✗ 23947/24576 differ (max_diff=111)       B:2% within 1% (max_diff=11445)             scale:✓ exact
+  conv_31          W:✗ 24046/24576 differ (max_diff=136)       B:1% within 1% (max_diff=14250)             scale:✗ ref=7.8125e-03 gen=1.9531e-03
+  conv_33          W:✗ 36240/36864 differ (max_diff=136)       B:0% within 1% (max_diff=28675)             scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_34          W:✗ 54317/55296 differ (max_diff=161)       B:4% within 1% (max_diff=18257)             scale:✗ ref=3.9062e-03 gen=1.9531e-03
+  conv_36          W:✗ 54240/55296 differ (max_diff=143)       B:1% within 1% (max_diff=20202)             scale:✓ exact
+  conv_37          W:✗ 54033/55296 differ (max_diff=134)       B:0% within 1% (max_diff=17778)             scale:✓ exact
+  conv_39          W:✗ 53247/55296 differ (max_diff=119)       B:1% within 1% (max_diff=5102)              scale:✗ ref=7.8125e-03 gen=3.1250e-02
+  conv_4           W:✗ 1498/1536 differ (max_diff=123)         B:0% within 1% (max_diff=4055)              scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_40          W:✗ 54290/55296 differ (max_diff=127)       B:1% within 1% (max_diff=18196)             scale:✓ exact
+  conv_42          W:✗ 90581/92160 differ (max_diff=127)       B:2% within 1% (max_diff=34797)             scale:✗ ref=1.9531e-03 gen=7.8125e-03
+  conv_43          W:✗ 149842/153600 differ (max_diff=128)     B:0% within 1% (max_diff=14223)             scale:✗ ref=7.8125e-03 gen=1.9531e-03
+  conv_45          W:✗ 150720/153600 differ (max_diff=144)     B:1% within 1% (max_diff=11950)             scale:✗ ref=9.7656e-04 gen=1.5625e-02
+  conv_46          W:✗ 150477/153600 differ (max_diff=141)     B:0% within 1% (max_diff=25958)             scale:✗ ref=7.8125e-03 gen=1.9531e-03
+  conv_48          W:✗ 149386/153600 differ (max_diff=133)     B:0% within 1% (max_diff=7139)              scale:✗ ref=1.9531e-03 gen=3.1250e-02
+  conv_49          W:✗ 147911/153600 differ (max_diff=124)     B:0% within 1% (max_diff=10910)             scale:✗ ref=1.5625e-02 gen=1.9531e-03
+  conv_51          W:✗ 300528/307200 differ (max_diff=124)     B:2% within 1% (max_diff=23823)             scale:✓ exact
+  conv_52          W:✗ 404597/409600 differ (max_diff=168)     B:0% within 1% (max_diff=12425)             scale:✓ exact
+  conv_6           W:✗ 2278/2304 differ (max_diff=121)         B:0% within 1% (max_diff=9920)              scale:✓ exact
+  conv_7           W:✗ 3388/3456 differ (max_diff=140)         B:3% within 1% (max_diff=6937)              scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_9           W:✗ 3373/3456 differ (max_diff=136)         B:0% within 1% (max_diff=14054)             scale:✗ ref=7.8125e-03 gen=1.5625e-02
+  conv_dw_11       W:✗ 1259/1296 differ (max_diff=139)         B:10% within 1% (max_diff=3351)             scale:✗ ref=6.2500e-02 gen=3.1250e-02
+  conv_dw_14       W:✗ 1677/1728 differ (max_diff=119)         B:7% within 1% (max_diff=1896)              scale:✗ ref=3.1250e-02 gen=6.2500e-02
+  conv_dw_17       W:✗ 1666/1728 differ (max_diff=162)         B:4% within 1% (max_diff=6840)              scale:✗ ref=3.1250e-02 gen=1.2500e-01
+  conv_dw_2        W:✗ 222/288 differ (max_diff=135)           B:28% within 1% (max_diff=1898)             scale:✗ ref=1.5625e-02 gen=1.0000e+00
+  conv_dw_20       W:✗ 1708/1728 differ (max_diff=136)         B:5% within 1% (max_diff=9418)              scale:✗ ref=3.1250e-02 gen=1.5625e-02
+  conv_dw_23       W:✗ 3330/3456 differ (max_diff=111)         B:12% within 1% (max_diff=3582)             scale:✓ exact
+  conv_dw_26       W:✗ 3331/3456 differ (max_diff=129)         B:3% within 1% (max_diff=3101)              scale:✗ ref=1.2500e-01 gen=3.1250e-02
+  conv_dw_29       W:✗ 3348/3456 differ (max_diff=125)         B:2% within 1% (max_diff=2819)              scale:✗ ref=1.5625e-02 gen=6.2500e-02
+  conv_dw_32       W:✗ 3317/3456 differ (max_diff=163)         B:5% within 1% (max_diff=3709)              scale:✓ exact
+  conv_dw_35       W:✗ 4877/5184 differ (max_diff=127)         B:3% within 1% (max_diff=1454)              scale:✗ ref=3.1250e-02 gen=1.2500e-01
+  conv_dw_38       W:✗ 4894/5184 differ (max_diff=137)         B:0% within 1% (max_diff=1609)              scale:✗ ref=1.2500e-01 gen=6.2500e-02
+  conv_dw_41       W:✗ 5049/5184 differ (max_diff=137)         B:3% within 1% (max_diff=6299)              scale:✗ ref=3.1250e-02 gen=1.5625e-02
+  conv_dw_44       W:✗ 8152/8640 differ (max_diff=129)         B:1% within 1% (max_diff=1942)              scale:✗ ref=1.2500e-01 gen=6.2500e-02
+  conv_dw_47       W:✗ 8389/8640 differ (max_diff=139)         B:1% within 1% (max_diff=2125)              scale:✗ ref=3.1250e-02 gen=6.2500e-02
+  conv_dw_5        W:✗ 851/864 differ (max_diff=161)           B:4% within 1% (max_diff=2607)              scale:✗ ref=6.2500e-02 gen=1.2500e-01
+  conv_dw_50       W:✗ 8480/8640 differ (max_diff=139)         B:0% within 1% (max_diff=281)               scale:✗ ref=2.5000e-01 gen=5.0000e-01
+  conv_dw_8        W:✗ 1244/1296 differ (max_diff=150)         B:26% within 1% (max_diff=3690)             scale:✗ ref=3.1250e-02 gen=1.0000e+00
+  fc_53            W:✗ 1280000/1280000 differ (max_diff=0)     B:0% within 1% (max_diff=0)                 scale:✗ ref=9.7656e-04 gen=1.9531e-03
+
+  WEIGHT SUMMARY: 47047/2189760 exact matches (2.1%)
+  BIAS   SUMMARY: 334 bias elements within 1%  (16722 further)
+
+======================================================================
+Variant: pow2_x128
+======================================================================
+  conv_1           W:✗ 788/864 differ (max_diff=177)           B:6% within 1% (max_diff=7860)              scale:✗ ref=7.8125e-03 gen=5.0000e-01
+  conv_10          W:✗ 3373/3456 differ (max_diff=116)         B:0% within 1% (max_diff=6553)              scale:✗ ref=1.5625e-02 gen=7.8125e-03
+  conv_12          W:✗ 4539/4608 differ (max_diff=150)         B:3% within 1% (max_diff=23651)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_13          W:✗ 6032/6144 differ (max_diff=146)         B:1% within 1% (max_diff=13517)             scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_15          W:✗ 6038/6144 differ (max_diff=142)         B:3% within 1% (max_diff=17093)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_16          W:✗ 6036/6144 differ (max_diff=135)         B:1% within 1% (max_diff=16260)             scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_18          W:✗ 6055/6144 differ (max_diff=155)         B:3% within 1% (max_diff=16137)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_19          W:✗ 6036/6144 differ (max_diff=150)         B:0% within 1% (max_diff=10504)             scale:✓ exact
+  conv_21          W:✗ 12047/12288 differ (max_diff=123)       B:0% within 1% (max_diff=21562)             scale:✓ exact
+  conv_22          W:✗ 24090/24576 differ (max_diff=144)       B:5% within 1% (max_diff=13107)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_24          W:✗ 23981/24576 differ (max_diff=114)       B:6% within 1% (max_diff=18978)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_25          W:✗ 24186/24576 differ (max_diff=152)       B:1% within 1% (max_diff=14789)             scale:✗ ref=1.9531e-03 gen=3.9062e-03
+  conv_27          W:✗ 24061/24576 differ (max_diff=143)       B:2% within 1% (max_diff=18981)             scale:✗ ref=3.9062e-03 gen=7.8125e-03
+  conv_28          W:✗ 24223/24576 differ (max_diff=156)       B:3% within 1% (max_diff=19578)             scale:✓ exact
+  conv_3           W:✗ 495/512 differ (max_diff=138)           B:0% within 1% (max_diff=7881)              scale:✓ exact
+  conv_30          W:✗ 23947/24576 differ (max_diff=111)       B:2% within 1% (max_diff=11445)             scale:✓ exact
+  conv_31          W:✗ 24046/24576 differ (max_diff=136)       B:1% within 1% (max_diff=14250)             scale:✗ ref=7.8125e-03 gen=1.9531e-03
+  conv_33          W:✗ 36240/36864 differ (max_diff=136)       B:0% within 1% (max_diff=28675)             scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_34          W:✗ 54317/55296 differ (max_diff=161)       B:4% within 1% (max_diff=18257)             scale:✗ ref=3.9062e-03 gen=1.9531e-03
+  conv_36          W:✗ 54240/55296 differ (max_diff=143)       B:1% within 1% (max_diff=20202)             scale:✓ exact
+  conv_37          W:✗ 54033/55296 differ (max_diff=134)       B:0% within 1% (max_diff=17778)             scale:✓ exact
+  conv_39          W:✗ 53247/55296 differ (max_diff=119)       B:1% within 1% (max_diff=5102)              scale:✗ ref=7.8125e-03 gen=3.1250e-02
+  conv_4           W:✗ 1498/1536 differ (max_diff=123)         B:0% within 1% (max_diff=4055)              scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_40          W:✗ 54290/55296 differ (max_diff=127)       B:1% within 1% (max_diff=18196)             scale:✓ exact
+  conv_42          W:✗ 90581/92160 differ (max_diff=127)       B:2% within 1% (max_diff=34797)             scale:✗ ref=1.9531e-03 gen=7.8125e-03
+  conv_43          W:✗ 149842/153600 differ (max_diff=128)     B:0% within 1% (max_diff=14223)             scale:✗ ref=7.8125e-03 gen=1.9531e-03
+  conv_45          W:✗ 150720/153600 differ (max_diff=144)     B:1% within 1% (max_diff=11950)             scale:✗ ref=9.7656e-04 gen=1.5625e-02
+  conv_46          W:✗ 150477/153600 differ (max_diff=141)     B:0% within 1% (max_diff=25958)             scale:✗ ref=7.8125e-03 gen=1.9531e-03
+  conv_48          W:✗ 149386/153600 differ (max_diff=133)     B:0% within 1% (max_diff=7139)              scale:✗ ref=1.9531e-03 gen=3.1250e-02
+  conv_49          W:✗ 147911/153600 differ (max_diff=124)     B:0% within 1% (max_diff=10910)             scale:✗ ref=1.5625e-02 gen=1.9531e-03
+  conv_51          W:✗ 300528/307200 differ (max_diff=124)     B:2% within 1% (max_diff=23823)             scale:✓ exact
+  conv_52          W:✗ 404597/409600 differ (max_diff=168)     B:0% within 1% (max_diff=12425)             scale:✓ exact
+  conv_6           W:✗ 2278/2304 differ (max_diff=121)         B:0% within 1% (max_diff=9920)              scale:✓ exact
+  conv_7           W:✗ 3388/3456 differ (max_diff=140)         B:3% within 1% (max_diff=6937)              scale:✗ ref=7.8125e-03 gen=3.9062e-03
+  conv_9           W:✗ 3373/3456 differ (max_diff=136)         B:0% within 1% (max_diff=14054)             scale:✗ ref=7.8125e-03 gen=1.5625e-02
+  conv_dw_11       W:✗ 1259/1296 differ (max_diff=139)         B:10% within 1% (max_diff=3351)             scale:✗ ref=6.2500e-02 gen=3.1250e-02
+  conv_dw_14       W:✗ 1677/1728 differ (max_diff=119)         B:7% within 1% (max_diff=1896)              scale:✗ ref=3.1250e-02 gen=6.2500e-02
+  conv_dw_17       W:✗ 1666/1728 differ (max_diff=162)         B:4% within 1% (max_diff=6840)              scale:✗ ref=3.1250e-02 gen=1.2500e-01
+  conv_dw_2        W:✗ 222/288 differ (max_diff=135)           B:28% within 1% (max_diff=1898)             scale:✗ ref=1.5625e-02 gen=1.0000e+00
+  conv_dw_20       W:✗ 1708/1728 differ (max_diff=136)         B:5% within 1% (max_diff=9418)              scale:✗ ref=3.1250e-02 gen=1.5625e-02
+  conv_dw_23       W:✗ 3330/3456 differ (max_diff=111)         B:12% within 1% (max_diff=3582)             scale:✓ exact
+  conv_dw_26       W:✗ 3331/3456 differ (max_diff=129)         B:3% within 1% (max_diff=3101)              scale:✗ ref=1.2500e-01 gen=3.1250e-02
+  conv_dw_29       W:✗ 3348/3456 differ (max_diff=125)         B:2% within 1% (max_diff=2819)              scale:✗ ref=1.5625e-02 gen=6.2500e-02
+  conv_dw_32       W:✗ 3317/3456 differ (max_diff=163)         B:5% within 1% (max_diff=3709)              scale:✓ exact
+  conv_dw_35       W:✗ 4877/5184 differ (max_diff=127)         B:3% within 1% (max_diff=1454)              scale:✗ ref=3.1250e-02 gen=1.2500e-01
+  conv_dw_38       W:✗ 4894/5184 differ (max_diff=137)         B:0% within 1% (max_diff=1609)              scale:✗ ref=1.2500e-01 gen=6.2500e-02
+  conv_dw_41       W:✗ 5049/5184 differ (max_diff=137)         B:3% within 1% (max_diff=6299)              scale:✗ ref=3.1250e-02 gen=1.5625e-02
+  conv_dw_44       W:✗ 8152/8640 differ (max_diff=129)         B:1% within 1% (max_diff=1942)              scale:✗ ref=1.2500e-01 gen=6.2500e-02
+  conv_dw_47       W:✗ 8389/8640 differ (max_diff=139)         B:1% within 1% (max_diff=2125)              scale:✗ ref=3.1250e-02 gen=6.2500e-02
+  conv_dw_5        W:✗ 851/864 differ (max_diff=161)           B:4% within 1% (max_diff=2607)              scale:✗ ref=6.2500e-02 gen=1.2500e-01
+  conv_dw_50       W:✗ 8480/8640 differ (max_diff=139)         B:0% within 1% (max_diff=281)               scale:✗ ref=2.5000e-01 gen=5.0000e-01
+  conv_dw_8        W:✗ 1244/1296 differ (max_diff=150)         B:26% within 1% (max_diff=3690)             scale:✗ ref=3.1250e-02 gen=1.0000e+00
+  fc_53            W:✗ 1280000/1280000 differ (max_diff=0)     B:0% within 1% (max_diff=0)                 scale:✗ ref=9.7656e-04 gen=1.9531e-03
+
+  WEIGHT SUMMARY: 47047/2189760 exact matches (2.1%)
+  BIAS   SUMMARY: 334 bias elements within 1%  (16722 further)
+
+======================================================================
+Variant: exact_x1.0
+======================================================================
+  conv_1           W:✗ 788/864 differ (max_diff=177)           B:6% within 1% (max_diff=7860)              scale:✗ ref=7.8125e-03 gen=4.6296e-01
+  conv_10          W:✗ 3373/3456 differ (max_diff=116)         B:0% within 1% (max_diff=6553)              scale:✗ ref=1.5625e-02 gen=6.7284e-03
+  conv_12          W:✗ 4539/4608 differ (max_diff=150)         B:3% within 1% (max_diff=23651)             scale:✗ ref=3.9062e-03 gen=7.3172e-03
+  conv_13          W:✗ 6032/6144 differ (max_diff=146)         B:1% within 1% (max_diff=13517)             scale:✗ ref=7.8125e-03 gen=5.5070e-03
+  conv_15          W:✗ 6038/6144 differ (max_diff=142)         B:3% within 1% (max_diff=17093)             scale:✗ ref=3.9062e-03 gen=8.1959e-03
+  conv_16          W:✗ 6036/6144 differ (max_diff=135)         B:1% within 1% (max_diff=16260)             scale:✗ ref=7.8125e-03 gen=4.7750e-03
+  conv_18          W:✗ 6055/6144 differ (max_diff=155)         B:3% within 1% (max_diff=16137)             scale:✗ ref=3.9062e-03 gen=6.5921e-03
+  conv_19          W:✗ 6036/6144 differ (max_diff=150)         B:0% within 1% (max_diff=10504)             scale:✗ ref=3.9062e-03 gen=3.4250e-03
+  conv_21          W:✗ 12047/12288 differ (max_diff=123)       B:0% within 1% (max_diff=21562)             scale:✗ ref=7.8125e-03 gen=6.6240e-03
+  conv_22          W:✗ 24090/24576 differ (max_diff=144)       B:5% within 1% (max_diff=13107)             scale:✗ ref=3.9062e-03 gen=5.6454e-03
+  conv_24          W:✗ 23981/24576 differ (max_diff=114)       B:6% within 1% (max_diff=18978)             scale:✗ ref=3.9062e-03 gen=6.2987e-03
+  conv_25          W:✗ 24186/24576 differ (max_diff=152)       B:1% within 1% (max_diff=14789)             scale:✗ ref=1.9531e-03 gen=4.7423e-03
+  conv_27          W:✗ 24061/24576 differ (max_diff=143)       B:2% within 1% (max_diff=18981)             scale:✗ ref=3.9062e-03 gen=7.8021e-03
+  conv_28          W:✗ 24223/24576 differ (max_diff=156)       B:3% within 1% (max_diff=19578)             scale:✗ ref=1.9531e-03 gen=2.1526e-03
+  conv_3           W:✗ 495/512 differ (max_diff=138)           B:0% within 1% (max_diff=7881)              scale:✗ ref=3.1250e-02 gen=2.3398e-02
+  conv_30          W:✗ 23947/24576 differ (max_diff=111)       B:2% within 1% (max_diff=11445)             scale:✗ ref=7.8125e-03 gen=1.0736e-02
+  conv_31          W:✗ 24046/24576 differ (max_diff=136)       B:1% within 1% (max_diff=14250)             scale:✗ ref=7.8125e-03 gen=2.6340e-03
+  conv_33          W:✗ 36240/36864 differ (max_diff=136)       B:0% within 1% (max_diff=28675)             scale:✗ ref=7.8125e-03 gen=3.6059e-03
+  conv_34          W:✗ 54317/55296 differ (max_diff=161)       B:4% within 1% (max_diff=18257)             scale:✗ ref=3.9062e-03 gen=2.3502e-03
+  conv_36          W:✗ 54240/55296 differ (max_diff=143)       B:1% within 1% (max_diff=20202)             scale:✗ ref=7.8125e-03 gen=8.6568e-03
+  conv_37          W:✗ 54033/55296 differ (max_diff=134)       B:0% within 1% (max_diff=17778)             scale:✗ ref=1.9531e-03 gen=2.0094e-03
+  conv_39          W:✗ 53247/55296 differ (max_diff=119)       B:1% within 1% (max_diff=5102)              scale:✗ ref=7.8125e-03 gen=2.3903e-02
+  conv_4           W:✗ 1498/1536 differ (max_diff=123)         B:0% within 1% (max_diff=4055)              scale:✗ ref=7.8125e-03 gen=5.0919e-03
+  conv_40          W:✗ 54290/55296 differ (max_diff=127)       B:1% within 1% (max_diff=18196)             scale:✗ ref=3.9062e-03 gen=3.6280e-03
+  conv_42          W:✗ 90581/92160 differ (max_diff=127)       B:2% within 1% (max_diff=34797)             scale:✗ ref=1.9531e-03 gen=6.3354e-03
+  conv_43          W:✗ 149842/153600 differ (max_diff=128)     B:0% within 1% (max_diff=14223)             scale:✗ ref=7.8125e-03 gen=2.0677e-03
+  conv_45          W:✗ 150720/153600 differ (max_diff=144)     B:1% within 1% (max_diff=11950)             scale:✗ ref=9.7656e-04 gen=1.2261e-02
+  conv_46          W:✗ 150477/153600 differ (max_diff=141)     B:0% within 1% (max_diff=25958)             scale:✗ ref=7.8125e-03 gen=1.5812e-03
+  conv_48          W:✗ 149386/153600 differ (max_diff=133)     B:0% within 1% (max_diff=7139)              scale:✗ ref=1.9531e-03 gen=3.3510e-02
+  conv_49          W:✗ 147911/153600 differ (max_diff=124)     B:0% within 1% (max_diff=10910)             scale:✗ ref=1.5625e-02 gen=2.6565e-03
+  conv_51          W:✗ 300528/307200 differ (max_diff=124)     B:2% within 1% (max_diff=23823)             scale:✗ ref=1.5625e-02 gen=1.2442e-02
+  conv_52          W:✗ 404597/409600 differ (max_diff=168)     B:0% within 1% (max_diff=12425)             scale:✗ ref=3.9062e-03 gen=5.3842e-03
+  conv_6           W:✗ 2278/2304 differ (max_diff=121)         B:0% within 1% (max_diff=9920)              scale:✗ ref=1.5625e-02 gen=1.3270e-02
+  conv_7           W:✗ 3388/3456 differ (max_diff=140)         B:3% within 1% (max_diff=6937)              scale:✗ ref=7.8125e-03 gen=5.0881e-03
+  conv_9           W:✗ 3373/3456 differ (max_diff=136)         B:0% within 1% (max_diff=14054)             scale:✗ ref=7.8125e-03 gen=1.2936e-02
+  conv_dw_11       W:✗ 1259/1296 differ (max_diff=139)         B:10% within 1% (max_diff=3351)             scale:✗ ref=6.2500e-02 gen=3.0734e-02
+  conv_dw_14       W:✗ 1677/1728 differ (max_diff=119)         B:7% within 1% (max_diff=1896)              scale:✗ ref=3.1250e-02 gen=8.3282e-02
+  conv_dw_17       W:✗ 1666/1728 differ (max_diff=162)         B:4% within 1% (max_diff=6840)              scale:✗ ref=3.1250e-02 gen=1.0387e-01
+  conv_dw_2        W:✗ 222/288 differ (max_diff=135)           B:28% within 1% (max_diff=1898)             scale:✗ ref=1.5625e-02 gen=4.1054e+00
+  conv_dw_20       W:✗ 1708/1728 differ (max_diff=136)         B:5% within 1% (max_diff=9418)              scale:✗ ref=3.1250e-02 gen=1.2629e-02
+  conv_dw_23       W:✗ 3330/3456 differ (max_diff=111)         B:12% within 1% (max_diff=3582)             scale:✗ ref=6.2500e-02 gen=8.2111e-02
+  conv_dw_26       W:✗ 3331/3456 differ (max_diff=129)         B:3% within 1% (max_diff=3101)              scale:✗ ref=1.2500e-01 gen=4.3377e-02
+  conv_dw_29       W:✗ 3348/3456 differ (max_diff=125)         B:2% within 1% (max_diff=2819)              scale:✗ ref=1.5625e-02 gen=6.5367e-02
+  conv_dw_32       W:✗ 3317/3456 differ (max_diff=163)         B:5% within 1% (max_diff=3709)              scale:✗ ref=3.1250e-02 gen=3.8100e-02
+  conv_dw_35       W:✗ 4877/5184 differ (max_diff=127)         B:3% within 1% (max_diff=1454)              scale:✗ ref=3.1250e-02 gen=1.2267e-01
+  conv_dw_38       W:✗ 4894/5184 differ (max_diff=137)         B:0% within 1% (max_diff=1609)              scale:✗ ref=1.2500e-01 gen=7.1381e-02
+  conv_dw_41       W:✗ 5049/5184 differ (max_diff=137)         B:3% within 1% (max_diff=6299)              scale:✗ ref=3.1250e-02 gen=1.6769e-02
+  conv_dw_44       W:✗ 8152/8640 differ (max_diff=129)         B:1% within 1% (max_diff=1942)              scale:✗ ref=1.2500e-01 gen=7.4696e-02
+  conv_dw_47       W:✗ 8389/8640 differ (max_diff=139)         B:1% within 1% (max_diff=2125)              scale:✗ ref=3.1250e-02 gen=7.9883e-02
+  conv_dw_5        W:✗ 851/864 differ (max_diff=161)           B:4% within 1% (max_diff=2607)              scale:✗ ref=6.2500e-02 gen=9.8962e-02
+  conv_dw_50       W:✗ 8480/8640 differ (max_diff=139)         B:0% within 1% (max_diff=281)               scale:✗ ref=2.5000e-01 gen=4.3633e-01
+  conv_dw_8        W:✗ 1244/1296 differ (max_diff=150)         B:26% within 1% (max_diff=3690)             scale:✗ ref=3.1250e-02 gen=3.4433e+00
+  fc_53            W:✗ 1280000/1280000 differ (max_diff=0)     B:0% within 1% (max_diff=0)                 scale:✗ ref=9.7656e-04 gen=2.3779e-03
+
+  WEIGHT SUMMARY: 47047/2189760 exact matches (2.1%)
+  BIAS   SUMMARY: 334 bias elements within 1%  (16722 further)
+
+======================================================================
+Variant: exact_x128
+======================================================================
+  conv_1           W:✗ 788/864 differ (max_diff=177)           B:6% within 1% (max_diff=7860)              scale:✗ ref=7.8125e-03 gen=4.6661e-01
+  conv_10          W:✗ 3373/3456 differ (max_diff=116)         B:0% within 1% (max_diff=6553)              scale:✗ ref=1.5625e-02 gen=6.7284e-03
+  conv_12          W:✗ 4539/4608 differ (max_diff=150)         B:3% within 1% (max_diff=23651)             scale:✗ ref=3.9062e-03 gen=7.3172e-03
+  conv_13          W:✗ 6032/6144 differ (max_diff=146)         B:1% within 1% (max_diff=13517)             scale:✗ ref=7.8125e-03 gen=5.5070e-03
+  conv_15          W:✗ 6038/6144 differ (max_diff=142)         B:3% within 1% (max_diff=17093)             scale:✗ ref=3.9062e-03 gen=8.1959e-03
+  conv_16          W:✗ 6036/6144 differ (max_diff=135)         B:1% within 1% (max_diff=16260)             scale:✗ ref=7.8125e-03 gen=4.7750e-03
+  conv_18          W:✗ 6055/6144 differ (max_diff=155)         B:3% within 1% (max_diff=16137)             scale:✗ ref=3.9062e-03 gen=6.5921e-03
+  conv_19          W:✗ 6036/6144 differ (max_diff=150)         B:0% within 1% (max_diff=10504)             scale:✗ ref=3.9062e-03 gen=3.4250e-03
+  conv_21          W:✗ 12047/12288 differ (max_diff=123)       B:0% within 1% (max_diff=21562)             scale:✗ ref=7.8125e-03 gen=6.6240e-03
+  conv_22          W:✗ 24090/24576 differ (max_diff=144)       B:5% within 1% (max_diff=13107)             scale:✗ ref=3.9062e-03 gen=5.6454e-03
+  conv_24          W:✗ 23981/24576 differ (max_diff=114)       B:6% within 1% (max_diff=18978)             scale:✗ ref=3.9062e-03 gen=6.2987e-03
+  conv_25          W:✗ 24186/24576 differ (max_diff=152)       B:1% within 1% (max_diff=14789)             scale:✗ ref=1.9531e-03 gen=4.7423e-03
+  conv_27          W:✗ 24061/24576 differ (max_diff=143)       B:2% within 1% (max_diff=18981)             scale:✗ ref=3.9062e-03 gen=7.8021e-03
+  conv_28          W:✗ 24223/24576 differ (max_diff=156)       B:3% within 1% (max_diff=19578)             scale:✗ ref=1.9531e-03 gen=2.1526e-03
+  conv_3           W:✗ 495/512 differ (max_diff=138)           B:0% within 1% (max_diff=7881)              scale:✗ ref=3.1250e-02 gen=2.3398e-02
+  conv_30          W:✗ 23947/24576 differ (max_diff=111)       B:2% within 1% (max_diff=11445)             scale:✗ ref=7.8125e-03 gen=1.0736e-02
+  conv_31          W:✗ 24046/24576 differ (max_diff=136)       B:1% within 1% (max_diff=14250)             scale:✗ ref=7.8125e-03 gen=2.6340e-03
+  conv_33          W:✗ 36240/36864 differ (max_diff=136)       B:0% within 1% (max_diff=28675)             scale:✗ ref=7.8125e-03 gen=3.6059e-03
+  conv_34          W:✗ 54317/55296 differ (max_diff=161)       B:4% within 1% (max_diff=18257)             scale:✗ ref=3.9062e-03 gen=2.3502e-03
+  conv_36          W:✗ 54240/55296 differ (max_diff=143)       B:1% within 1% (max_diff=20202)             scale:✗ ref=7.8125e-03 gen=8.6568e-03
+  conv_37          W:✗ 54033/55296 differ (max_diff=134)       B:0% within 1% (max_diff=17778)             scale:✗ ref=1.9531e-03 gen=2.0094e-03
+  conv_39          W:✗ 53247/55296 differ (max_diff=119)       B:1% within 1% (max_diff=5102)              scale:✗ ref=7.8125e-03 gen=2.3903e-02
+  conv_4           W:✗ 1498/1536 differ (max_diff=123)         B:0% within 1% (max_diff=4055)              scale:✗ ref=7.8125e-03 gen=5.0919e-03
+  conv_40          W:✗ 54290/55296 differ (max_diff=127)       B:1% within 1% (max_diff=18196)             scale:✗ ref=3.9062e-03 gen=3.6280e-03
+  conv_42          W:✗ 90581/92160 differ (max_diff=127)       B:2% within 1% (max_diff=34797)             scale:✗ ref=1.9531e-03 gen=6.3354e-03
+  conv_43          W:✗ 149842/153600 differ (max_diff=128)     B:0% within 1% (max_diff=14223)             scale:✗ ref=7.8125e-03 gen=2.0677e-03
+  conv_45          W:✗ 150720/153600 differ (max_diff=144)     B:1% within 1% (max_diff=11950)             scale:✗ ref=9.7656e-04 gen=1.2261e-02
+  conv_46          W:✗ 150477/153600 differ (max_diff=141)     B:0% within 1% (max_diff=25958)             scale:✗ ref=7.8125e-03 gen=1.5812e-03
+  conv_48          W:✗ 149386/153600 differ (max_diff=133)     B:0% within 1% (max_diff=7139)              scale:✗ ref=1.9531e-03 gen=3.3510e-02
+  conv_49          W:✗ 147911/153600 differ (max_diff=124)     B:0% within 1% (max_diff=10910)             scale:✗ ref=1.5625e-02 gen=2.6565e-03
+  conv_51          W:✗ 300528/307200 differ (max_diff=124)     B:2% within 1% (max_diff=23823)             scale:✗ ref=1.5625e-02 gen=1.2442e-02
+  conv_52          W:✗ 404597/409600 differ (max_diff=168)     B:0% within 1% (max_diff=12425)             scale:✗ ref=3.9062e-03 gen=5.3842e-03
+  conv_6           W:✗ 2278/2304 differ (max_diff=121)         B:0% within 1% (max_diff=9920)              scale:✗ ref=1.5625e-02 gen=1.3270e-02
+  conv_7           W:✗ 3388/3456 differ (max_diff=140)         B:3% within 1% (max_diff=6937)              scale:✗ ref=7.8125e-03 gen=5.0881e-03
+  conv_9           W:✗ 3373/3456 differ (max_diff=136)         B:0% within 1% (max_diff=14054)             scale:✗ ref=7.8125e-03 gen=1.2936e-02
+  conv_dw_11       W:✗ 1259/1296 differ (max_diff=139)         B:10% within 1% (max_diff=3351)             scale:✗ ref=6.2500e-02 gen=3.0734e-02
+  conv_dw_14       W:✗ 1677/1728 differ (max_diff=119)         B:7% within 1% (max_diff=1896)              scale:✗ ref=3.1250e-02 gen=8.3282e-02
+  conv_dw_17       W:✗ 1666/1728 differ (max_diff=162)         B:4% within 1% (max_diff=6840)              scale:✗ ref=3.1250e-02 gen=1.0387e-01
+  conv_dw_2        W:✗ 222/288 differ (max_diff=135)           B:28% within 1% (max_diff=1898)             scale:✗ ref=1.5625e-02 gen=4.1054e+00
+  conv_dw_20       W:✗ 1708/1728 differ (max_diff=136)         B:5% within 1% (max_diff=9418)              scale:✗ ref=3.1250e-02 gen=1.2629e-02
+  conv_dw_23       W:✗ 3330/3456 differ (max_diff=111)         B:12% within 1% (max_diff=3582)             scale:✗ ref=6.2500e-02 gen=8.2111e-02
+  conv_dw_26       W:✗ 3331/3456 differ (max_diff=129)         B:3% within 1% (max_diff=3101)              scale:✗ ref=1.2500e-01 gen=4.3377e-02
+  conv_dw_29       W:✗ 3348/3456 differ (max_diff=125)         B:2% within 1% (max_diff=2819)              scale:✗ ref=1.5625e-02 gen=6.5367e-02
+  conv_dw_32       W:✗ 3317/3456 differ (max_diff=163)         B:5% within 1% (max_diff=3709)              scale:✗ ref=3.1250e-02 gen=3.8100e-02
+  conv_dw_35       W:✗ 4877/5184 differ (max_diff=127)         B:3% within 1% (max_diff=1454)              scale:✗ ref=3.1250e-02 gen=1.2267e-01
+  conv_dw_38       W:✗ 4894/5184 differ (max_diff=137)         B:0% within 1% (max_diff=1609)              scale:✗ ref=1.2500e-01 gen=7.1381e-02
+  conv_dw_41       W:✗ 5049/5184 differ (max_diff=137)         B:3% within 1% (max_diff=6299)              scale:✗ ref=3.1250e-02 gen=1.6769e-02
+  conv_dw_44       W:✗ 8152/8640 differ (max_diff=129)         B:1% within 1% (max_diff=1942)              scale:✗ ref=1.2500e-01 gen=7.4696e-02
+  conv_dw_47       W:✗ 8389/8640 differ (max_diff=139)         B:1% within 1% (max_diff=2125)              scale:✗ ref=3.1250e-02 gen=7.9883e-02
+  conv_dw_5        W:✗ 851/864 differ (max_diff=161)           B:4% within 1% (max_diff=2607)              scale:✗ ref=6.2500e-02 gen=9.8962e-02
+  conv_dw_50       W:✗ 8480/8640 differ (max_diff=139)         B:0% within 1% (max_diff=281)               scale:✗ ref=2.5000e-01 gen=4.3633e-01
+  conv_dw_8        W:✗ 1244/1296 differ (max_diff=150)         B:26% within 1% (max_diff=3690)             scale:✗ ref=3.1250e-02 gen=3.4433e+00
+  fc_53            W:✗ 1280000/1280000 differ (max_diff=0)     B:0% within 1% (max_diff=0)                 scale:✗ ref=9.7656e-04 gen=2.3779e-03
+
+  WEIGHT SUMMARY: 47047/2189760 exact matches (2.1%)
+  BIAS   SUMMARY: 334 bias elements within 1%  (16722 further)
+
+======================================================================
+BEST MATCH: variant=pow2_x1.0  weight_match=2.1%
+======================================================================

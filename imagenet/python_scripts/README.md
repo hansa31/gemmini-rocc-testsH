@@ -80,3 +80,101 @@ Arguments: `[ws|os|cpu] [conv|matmul] [check]`
 |--------|-------------|----------------|
 | 200    | ~29 MB      | ~600 KB        |
 | 50,000 | ~7.2 GB     | ~600 KB        |
+<<<<<<< HEAD
+=======
+
+---
+
+# CIFAR-10 Preparation Scripts for Gemmini
+
+Prepare CIFAR-10 images as input for `mobilenet_cifar10_stream.c` and
+`mobilenet_cifar10_float_stream.c`.
+
+## End-to-End: How to Run MobileNetV2-CIFAR10 on CIFAR-10 Images
+
+### 1. Install Python dependencies
+
+```bash
+pip install numpy torchvision
+```
+
+> `torchvision` handles downloading and loading CIFAR-10 automatically.
+> No manual dataset download is required.
+
+### 2. Prepare the binary image file
+
+```bash
+cd imagenet/python_scripts
+
+# Full test set (10,000 images) — default
+python prepare_cifar10.py
+
+# Training set (50,000 images)
+python prepare_cifar10.py --split train
+
+# Subset — first 1,000 test images
+python prepare_cifar10.py --num-images 1000
+
+# Custom output directory
+python prepare_cifar10.py --output-dir /path/to/output/
+
+# Visualize first 5 preprocessed images before writing
+python prepare_cifar10.py --visualize 5
+```
+
+CIFAR-10 is downloaded automatically to `/tmp/cifar10_data` on the first run
+(override with `--data-root /your/cache`).
+
+This produces two files (default: in `imagenet/`):
+- `cifar10_test_10000.bin` — 10K images as signed int8, ~30 MB
+- `cifar10_test_10000_labels.txt` — one label per line (0–9)
+
+CIFAR-10 class mapping: `0=airplane 1=automobile 2=bird 3=cat 4=deer 5=dog 6=frog 7=horse 8=ship 9=truck`
+
+### 3. Configure `mobilenet_cifar10_stream.c`
+
+Edit the `#define`s at the top of the C source to match your files:
+
+```c
+#define NUM_IMAGES      10000
+#define BATCH_SIZE      4
+#define IMAGES_BIN_FILE "cifar10_test_10000.bin"
+#define LABELS_TXT_FILE "cifar10_test_10000_labels.txt"
+```
+
+For a quick 1,000-image test:
+```c
+#define NUM_IMAGES      1000
+#define BATCH_SIZE      4
+#define IMAGES_BIN_FILE "cifar10_test_1000.bin"
+#define LABELS_TXT_FILE "cifar10_test_1000_labels.txt"
+```
+
+### 4. Build and run
+
+```bash
+# Build (from gemmini-rocc-tests root)
+make -C imagenet
+
+# Run (place .bin and .txt files in the working directory)
+./imagenet/mobilenet_cifar10_stream-linux
+```
+
+### How It Works
+
+- **Preprocessing**: each uint8 pixel is mapped to int8 via
+  `clip(pixel - 128, -128, 127)`, matching the original `cifar10_images.h`
+  generation pipeline.
+- **Data format**: `int8_t`, HWC layout, RGB order.
+- **Binary layout**: flat contiguous int8 values, images back-to-back,
+  32×32×3 bytes per image. Equivalent to `int8_t images[N][32][32][3]`.
+- **Streaming**: the C program reads `BATCH_SIZE=4` images at a time via
+  `fread`, keeping image memory constant (~12 KB) regardless of dataset size.
+- **Labels**: loaded fully into memory (10K ints ≈ 40 KB).
+
+| Images | Binary size | Image RAM in C |
+|--------|-------------|----------------|
+| 1,000  | ~2.9 MB     | ~12 KB         |
+| 10,000 | ~29 MB      | ~12 KB         |
+| 50,000 | ~147 MB     | ~12 KB         |
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499

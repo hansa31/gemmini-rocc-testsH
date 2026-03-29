@@ -93,7 +93,11 @@ static void attention(
 
     const elem_t *qkv_weights[3] = {Wq, Wk, Wv};
     const elem_t *qkv_ins[3]     = {input, enc_out, enc_out};
+<<<<<<< HEAD
     const acc_t  *qkv_bs[3]      = {Wq_b, Wk_b, Wk_b};
+=======
+    const acc_t  *qkv_bs[3]      = {Wq_b, Wk_b, Wv_b};
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     elem_t       *qkv_outs[3]    = {Q_buf, K_buf, V_buf};
 
     for (int i = 0; i < 3; i++) {

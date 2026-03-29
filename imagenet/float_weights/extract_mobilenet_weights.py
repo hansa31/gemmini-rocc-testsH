@@ -28,6 +28,7 @@ from transformers import MobileNetV2ForImageClassification
 # MobileNetV2ForImageClassification state dict key prefixes → Gemmini layer names.
 #
 # HuggingFace model structure:
+<<<<<<< HEAD
 #   mobilenet_v2.conv_stem          → conv_1       (3→32,  3×3, stride 2)
 #   mobilenet_v2.layer.0            → dw_2 + pw_3  (block 0, t=1, no expand)
 #   mobilenet_v2.layer.1 .. .16     → expand + dw + project (blocks 1-6)
@@ -36,6 +37,17 @@ from transformers import MobileNetV2ForImageClassification
 #
 # Each inverted residual (layer.i) contains:
 #   .expand_1x1  (optional, absent when expansion_ratio=1, i.e. layer.0)
+=======
+#   mobilenet_v2.conv_stem.first_conv  → conv_1       (3→32,  3×3, stride 2)
+#   mobilenet_v2.conv_stem.conv_3x3    → conv_dw_2    (32 dw, 3×3, stride 1)
+#   mobilenet_v2.conv_stem.reduce_1x1  → conv_3       (32→16, 1×1)
+#   mobilenet_v2.layer.0 .. .15        → expand + dw + project (blocks 0-15)
+#   mobilenet_v2.conv_1x1              → conv_52      (320→1280, 1×1)
+#   classifier                         → fc_53        (1280→1000)
+#
+# Each inverted residual (layer.i) contains:
+#   .expand_1x1  (present in all 16 blocks; layer.0 is t=6, 16→96)
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 #   .conv_3x3    (depthwise)
 #   .reduce_1x1  (projection, no activation)
 
@@ -46,6 +58,7 @@ def build_layer_mapping():
     """
     mapping = []
 
+<<<<<<< HEAD
     # 1) Initial conv stem
     mapping.append(("conv_1", "mobilenet_v2.conv_stem", "conv"))
 
@@ -58,6 +71,17 @@ def build_layer_mapping():
     # layer indices 1..16 map to gemmini conv indices 4..51
     gemmini_idx = 4
     for hf_layer_idx in range(1, 17):
+=======
+    # 1) Initial conv stem — 3 sub-layers inside mobilenet_v2.conv_stem
+    mapping.append(("conv_1",    "mobilenet_v2.conv_stem.first_conv", "conv"))
+    mapping.append(("conv_dw_2", "mobilenet_v2.conv_stem.conv_3x3",   "dw"))
+    mapping.append(("conv_3",    "mobilenet_v2.conv_stem.reduce_1x1", "conv"))
+
+    # 2) Inverted residual blocks
+    # layer.0..15 → gemmini conv_4..conv_51 (each block: expand + dw + project)
+    gemmini_idx = 4
+    for hf_layer_idx in range(0, 16):
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         prefix = f"mobilenet_v2.layer.{hf_layer_idx}"
         # expand 1x1
         mapping.append((f"conv_{gemmini_idx}", f"{prefix}.expand_1x1", "conv"))
@@ -388,9 +412,15 @@ def extract_layer(state_dict, gemmini_name, hf_prefix, layer_type, num_classes):
     """
     if layer_type == "fc":
         # FC layer — no BatchNorm, direct extraction
+<<<<<<< HEAD
         # HuggingFace classifier is nn.Sequential(Dropout, Linear)
         fc_w = state_dict["classifier.1.weight"].numpy()  # [num_classes, 1280]
         fc_b = state_dict["classifier.1.bias"].numpy()     # [num_classes]
+=======
+        # HuggingFace MobileNetV2 classifier is a bare nn.Linear
+        fc_w = state_dict["classifier.weight"].numpy()  # [num_classes, 1280]
+        fc_b = state_dict["classifier.bias"].numpy()    # [num_classes]
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 
         if num_classes == 1001:
             # TF convention: index 0 is background class, skip it
@@ -593,7 +623,11 @@ def main():
     state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
     # Determine number of output classes
+<<<<<<< HEAD
     classifier_weight = state_dict["classifier.1.weight"]
+=======
+    classifier_weight = state_dict["classifier.weight"]
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     num_classes = classifier_weight.shape[0]
     print(f"Model has {num_classes} output classes")
     if num_classes == 1001:

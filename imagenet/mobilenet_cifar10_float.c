@@ -8,7 +8,11 @@
 #include "include/gemmini_nn.h"
 
 #include "mobilenet_cifar10_params_float.h"
+<<<<<<< HEAD
 #include "cifar10_images.h"
+=======
+#include "cifar10_images_224.h"
+>>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 
 int main (int argc, char * argv[]) {
 #ifndef BAREMETAL
