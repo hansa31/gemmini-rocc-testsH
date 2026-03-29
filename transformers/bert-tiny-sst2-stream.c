@@ -60,7 +60,7 @@ static inline uint64_t get_time_ns(void) {
 /* ── Dataset configuration ──────────────────────────────────────────────────
  * Update these after running prepare_sst2.py to match the output.
  */
-#define NUM_EXAMPLES    5
+#define NUM_EXAMPLES    100
 #define EMBEDDINGS_BIN  "sst2_validation_872.bin"
 #define LABELS_TXT      "sst2_validation_872_labels.txt"
 #define ATTN_MASKS_BIN  "sst2_validation_872_attn_masks.bin"

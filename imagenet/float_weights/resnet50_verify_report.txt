@@ -1,0 +1,231 @@
+ResNet50 ImageNet INT8 Verification Report
+Model: microsoft/resnet-50
+
+Model loaded: 1000 output classes
+
+======================================================================
+CHECK 1: Architecture (LAYER_MAPPING vs HuggingFace state dict)
+======================================================================
+  conv_1      OK  conv_w=(64, 3, 7, 7)
+  conv_2      OK  conv_w=(64, 64, 1, 1)
+  conv_3      OK  conv_w=(64, 64, 3, 3)
+  conv_4      OK  conv_w=(256, 64, 1, 1)
+  conv_5      OK  conv_w=(256, 64, 1, 1)
+  conv_6      OK  conv_w=(64, 256, 1, 1)
+  conv_7      OK  conv_w=(64, 64, 3, 3)
+  conv_8      OK  conv_w=(256, 64, 1, 1)
+  conv_9      OK  conv_w=(64, 256, 1, 1)
+  conv_10     OK  conv_w=(64, 64, 3, 3)
+  conv_11     OK  conv_w=(256, 64, 1, 1)
+  conv_12     OK  conv_w=(128, 256, 1, 1)
+  conv_13     OK  conv_w=(128, 128, 3, 3)
+  conv_14     OK  conv_w=(512, 128, 1, 1)
+  conv_15     OK  conv_w=(512, 256, 1, 1)
+  conv_16     OK  conv_w=(128, 512, 1, 1)
+  conv_17     OK  conv_w=(128, 128, 3, 3)
+  conv_18     OK  conv_w=(512, 128, 1, 1)
+  conv_19     OK  conv_w=(128, 512, 1, 1)
+  conv_20     OK  conv_w=(128, 128, 3, 3)
+  conv_21     OK  conv_w=(512, 128, 1, 1)
+  conv_22     OK  conv_w=(128, 512, 1, 1)
+  conv_23     OK  conv_w=(128, 128, 3, 3)
+  conv_24     OK  conv_w=(512, 128, 1, 1)
+  conv_25     OK  conv_w=(256, 512, 1, 1)
+  conv_26     OK  conv_w=(256, 256, 3, 3)
+  conv_27     OK  conv_w=(1024, 256, 1, 1)
+  conv_28     OK  conv_w=(1024, 512, 1, 1)
+  conv_29     OK  conv_w=(256, 1024, 1, 1)
+  conv_30     OK  conv_w=(256, 256, 3, 3)
+  conv_31     OK  conv_w=(1024, 256, 1, 1)
+  conv_32     OK  conv_w=(256, 1024, 1, 1)
+  conv_33     OK  conv_w=(256, 256, 3, 3)
+  conv_34     OK  conv_w=(1024, 256, 1, 1)
+  conv_35     OK  conv_w=(256, 1024, 1, 1)
+  conv_36     OK  conv_w=(256, 256, 3, 3)
+  conv_37     OK  conv_w=(1024, 256, 1, 1)
+  conv_38     OK  conv_w=(256, 1024, 1, 1)
+  conv_39     OK  conv_w=(256, 256, 3, 3)
+  conv_40     OK  conv_w=(1024, 256, 1, 1)
+  conv_41     OK  conv_w=(256, 1024, 1, 1)
+  conv_42     OK  conv_w=(256, 256, 3, 3)
+  conv_43     OK  conv_w=(1024, 256, 1, 1)
+  conv_44     OK  conv_w=(512, 1024, 1, 1)
+  conv_45     OK  conv_w=(512, 512, 3, 3)
+  conv_46     OK  conv_w=(2048, 512, 1, 1)
+  conv_47     OK  conv_w=(2048, 1024, 1, 1)
+  conv_48     OK  conv_w=(512, 2048, 1, 1)
+  conv_49     OK  conv_w=(512, 512, 3, 3)
+  conv_50     OK  conv_w=(2048, 512, 1, 1)
+  conv_51     OK  conv_w=(512, 2048, 1, 1)
+  conv_52     OK  conv_w=(512, 512, 3, 3)
+  conv_53     OK  conv_w=(2048, 512, 1, 1)
+  fc_54       OK  W=(1000, 2048)  b=(1000,)
+
+  RESULT: All 54 layers found in HuggingFace state dict ✓
+
+======================================================================
+CHECK 2: Preprocessing — float model on images.h (4 reference images)
+  Expected top-1 labels: [75, 900, 125, 897]
+======================================================================
+
+  Method A  pixel-128 as float   (x_scale_0=1.0, current)
+    Image 0: pred= 227 (score=+484.20)  expected=75  ✗  | top3=[227, 334, 278]
+    Image 1: pred= 227 (score=+436.08)  expected=900  ✗  | top3=[227, 334, 278]
+    Image 2: pred= 227 (score=+289.79)  expected=125  ✗  | top3=[227, 334, 278]
+    Image 3: pred= 227 (score=+942.33)  expected=897  ✗  | top3=[227, 334, 278]
+    Top-1 correct: 0/4
+
+  Method B  pixel/255 ∈[0,1]    (no norm, x_scale_0=1/255)
+    Image 0: pred=  75 (score=+7.50)  expected=75  ✓  | top3=[75, 73, 301]
+    Image 1: pred= 900 (score=+8.43)  expected=900  ✓  | top3=[900, 505, 968]
+    Image 2: pred= 641 (score=+9.04)  expected=125  ✗  | top3=[641, 429, 522]
+    Image 3: pred= 897 (score=+9.25)  expected=897  ✓  | top3=[897, 282, 281]
+    Top-1 correct: 3/4
+
+  Method C  standard ImageNet   CORRECT for microsoft/resnet-50
+    Image 0: pred=  75 (score=+8.59)  expected=75  ✓  | top3=[75, 301, 73]
+    Image 1: pred= 900 (score=+11.36)  expected=900  ✓  | top3=[900, 505, 89]
+    Image 2: pred= 641 (score=+10.84)  expected=125  ✗  | top3=[641, 768, 522]
+    Image 3: pred= 897 (score=+12.95)  expected=897  ✓  | top3=[897, 282, 281]
+    Top-1 correct: 3/4
+
+  [Method C logit statistics for sanity]
+    Image 0: logit min=-14.54  max=8.59  std=1.30
+    Image 1: logit min=-12.36  max=11.36  std=1.04
+    Image 2: logit min=-14.99  max=10.84  std=1.40
+    Image 3: logit min=-21.07  max=12.95  std=2.56
+
+  [Method A logit statistics — what INT8 model tries to approximate]
+    Image 0: logit min=-3418.76  max=484.20  std=519.54
+    Image 1: logit min=-2969.60  max=436.08  std=444.47
+    Image 2: logit min=-1892.57  max=289.79  std=285.95
+    Image 3: logit min=-5678.62  max=942.33  std=862.59
+
+======================================================================
+CHECK 3: Weight/scale comparison — resnet50_params.h vs fresh extraction
+======================================================================
+  Reference header: /home/hansa/Desktop/chipyard/generators/gemmini/software/gemmini-rocc-tests/imagenet/resnet50_params.h
+  Layers in reference: 54
+
+  --- Variant: x_scale_0=1.0   (current extraction) ---
+    conv_1        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_10       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_11       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_12       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_13       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_14       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_15       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_16       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_17       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_18       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_19       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_2        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_20       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_21       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_22       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_23       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_24       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_25       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_26       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_27       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_28       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_29       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_3        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_30       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_31       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_32       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_33       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_34       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_35       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_36       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_37       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_38       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_39       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_4        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_40       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_41       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_42       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_43       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_44       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_45       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_46       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_47       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_48       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_49       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_5        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_50       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_51       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_52       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_53       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_6        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_7        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_8        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_9        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    fc_54         W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+
+    WEIGHT SUMMARY: 25502912/25502912 exact (100.0%)
+    BIAS   SUMMARY: 30560 within 1%  (0 further)
+
+  --- Variant: x_scale_0=128/127 (symmetric INT8) ---
+    conv_1        W:✓ all exact                             B:100% within 1% (max_diff=12)    scale:≈ within 2%
+    conv_10       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_11       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_12       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_13       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_14       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_15       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_16       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_17       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_18       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_19       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_2        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_20       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_21       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_22       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_23       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_24       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_25       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_26       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_27       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_28       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_29       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_3        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_30       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_31       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_32       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_33       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_34       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_35       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_36       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_37       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_38       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_39       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_4        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_40       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_41       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_42       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_43       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_44       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_45       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_46       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_47       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_48       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_49       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_5        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_50       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_51       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_52       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_53       W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_6        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    conv_7        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_8        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+    conv_9        W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:≈ within 2%
+    fc_54         W:✓ all exact                             B:100% within 1% (max_diff=0)     scale:✓ exact
+
+    WEIGHT SUMMARY: 25502912/25502912 exact (100.0%)
+    BIAS   SUMMARY: 30560 within 1%  (0 further)
+
+  BEST MATCH: x_scale_0=1.0   (current extraction)  (100.0% exact weight match)
+
+  fc_54 output_scale in params.h: 8.738624e-02
+  Float logit 5.0 → INT8 output ≈ 57  (ideal: ~50-70, terrible if ≤5)
