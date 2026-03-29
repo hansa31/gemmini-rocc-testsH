@@ -5,3 +5,14 @@ autom4te.cache
 configure
 .ipynb_checkpoints
 *.pyc
+
+# Large binary/data files
+*.bin
+*.npy
+*.tflite
+*.tgz
+
+# Large generated parameter/weight headers
+imagenet/*_params*.h
+imagenet/mobilenet_verify/*_params*.h
+transformers/bert_params*.h
