@@ -65,6 +65,7 @@ tests = \
 	bench_gemm_large \
 	bench_gemm_bert \
 	bench_gemm_resnet \
+	tiled_matmul_fp_verify \
 
 tests_baremetal = $(tests:=-baremetal)
 
@@ -87,7 +88,7 @@ else
 endif
 
 BENCH_COMMON = $(abs_top_srcdir)/riscv-tests/benchmarks/common
-GEMMINI_HEADERS = $(abs_top_srcdir)/include/gemmini.h $(abs_top_srcdir)/include/gemmini_params.h $(abs_top_srcdir)/include/gemmini_testutils.h
+GEMMINI_HEADERS = $(abs_top_srcdir)/include/gemmini.h $(abs_top_srcdir)/include/gemmini_params.h $(abs_top_srcdir)/include/gemmini_testutils.h $(abs_top_srcdir)/include/gemmini_float_convert.h
 
 CFLAGS := $(CFLAGS) \
 	-DPREALLOCATE=1 \
