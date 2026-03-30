@@ -6,6 +6,7 @@
 #endif
 #include "include/gemmini.h"
 #include "include/gemmini_nn.h"
+#include "include/gemmini_float_convert.h"
 
 #include "resnet50_params_float.h"
 // #include "resnet50_params_1batch.h"
@@ -999,7 +1000,7 @@ int main (int argc, char * argv[]) {
         // Print fc_54 stats
         float fc_min = 1e30f, fc_max = -1e30f;
         for (int i = 0; i < 1000; i++) {
-            float v = fc_54_out[0][i];
+            float v = elem_bits_to_float(fc_54_out[0][i]);
             if (v < fc_min) fc_min = v;
             if (v > fc_max) fc_max = v;
         }
@@ -1008,14 +1009,15 @@ int main (int argc, char * argv[]) {
         // Print predictions for images.h
         for (int batch = 0; batch < BATCH_SIZE; batch++) {
             int max_idx = 0;
-            elem_t max_val = fc_54_out[batch][0];
+            float max_val = elem_bits_to_float(fc_54_out[batch][0]);
             for (int i = 1; i < fc_54_params.out_features; i++) {
-                if (fc_54_out[batch][i] > max_val) {
-                    max_val = fc_54_out[batch][i];
+                float val = elem_bits_to_float(fc_54_out[batch][i]);
+                if (val > max_val) {
+                    max_val = val;
                     max_idx = i;
                 }
             }
-            printf("  [REF] Image %d: pred=%d (score=%.4f)\n", batch, max_idx, (float)max_val);
+            printf("  [REF] Image %d: pred=%d (score=%.4f)\n", batch, max_idx, max_val);
         }
         int ref_correct[] = {75, 900, 125, 897};
         printf("  [REF] Expected: {75, 900, 125, 897}\n");
@@ -2183,7 +2185,7 @@ int main (int argc, char * argv[]) {
             }
 
             for (int i = 0; i < fc_54_params.out_features; i++) {
-                float score = fc_54_out[batch][i];
+                float score = elem_bits_to_float(fc_54_out[batch][i]);
                 for (int k = 0; k < TOP_K; k++) {
                     if (score > top_scores[k]) {
                         for (int j = TOP_K - 1; j > k; j--) {

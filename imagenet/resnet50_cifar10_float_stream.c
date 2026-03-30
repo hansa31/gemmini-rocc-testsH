@@ -28,6 +28,7 @@
 
 #include "include/gemmini.h"
 #include "include/gemmini_nn.h"
+#include "include/gemmini_float_convert.h"
 
 #include "resnet50_cifar10_params_float.h"
 #include "cifar10_images.h"
@@ -80,14 +81,14 @@ static void global_average_pool(
     int spatial = out_row_dim * out_col_dim;
     for (int b = 0; b < batch_size; b++) {
         for (int c = 0; c < out_channels; c++) {
-            elem_t sum = 0.0f;
+            float sum = 0.0f;
             for (int r = 0; r < out_row_dim; r++) {
                 for (int col = 0; col < out_col_dim; col++) {
                     int patch_idx = b * spatial + r * out_col_dim + col;
-                    sum += in_data[patch_idx * out_channels + c];
+                    sum += elem_bits_to_float(in_data[patch_idx * out_channels + c]);
                 }
             }
-            average[c][b] = sum / (elem_t)spatial;
+            average[c][b] = float_to_elem_bits(sum / (float)spatial);
         }
     }
 }
@@ -762,9 +763,9 @@ static int topk_correct(int batch, int true_label, int k)
     // Simple insertion sort (num_classes=10, negligible overhead)
     for (int i = 1; i < num_classes; i++) {
         int key = sorted_idx[i];
-        elem_t key_score = fc_54_out[key][batch];
+        float key_score = elem_bits_to_float(fc_54_out[key][batch]);
         int j = i - 1;
-        while (j >= 0 && fc_54_out[sorted_idx[j]][batch] < key_score) {
+        while (j >= 0 && elem_bits_to_float(fc_54_out[sorted_idx[j]][batch]) < key_score) {
             sorted_idx[j + 1] = sorted_idx[j];
             j--;
         }
@@ -782,7 +783,7 @@ static int argmax_batch(int batch)
     int num_classes = fc_54_params.out_features;
     int best = 0;
     for (int i = 1; i < num_classes; i++) {
-        if (fc_54_out[i][batch] > fc_54_out[best][batch])
+        if (elem_bits_to_float(fc_54_out[i][batch]) > elem_bits_to_float(fc_54_out[best][batch]))
             best = i;
     }
     return best;
@@ -886,7 +887,7 @@ int main(int argc, char *argv[])
                 goto done;
             }
             for (int i = 0; i < IMAGE_SIZE; i++)
-                image_batch[b * IMAGE_SIZE + i] = (elem_t)(raw[i] / 255.0f);
+                image_batch[b * IMAGE_SIZE + i] = float_to_elem_bits(raw[i] / 255.0f);
         }
 
         // Load labels

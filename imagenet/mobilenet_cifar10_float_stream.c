@@ -6,6 +6,7 @@
 #endif
 #include "include/gemmini.h"
 #include "include/gemmini_nn.h"
+#include "include/gemmini_float_convert.h"
 
 #include "mobilenet_cifar10_params_float.h"
 #include "cifar10_images_224.h"   // Reference test images (4 CIFAR-10 samples, 224x224) for A/B comparison
@@ -169,15 +170,16 @@ int main (int argc, char * argv[]) {
         }
 
         // Print conv_1 stats
-        int c1_min = 127, c1_max = -128, c1_nz = 0;
+        float c1_min = 1e30f, c1_max = -1e30f;
+        int c1_nz = 0;
         for (int r = 0; r < conv_1_params.I / 4; r++)
             for (int c = 0; c < conv_1_params.J; c++) {
-                int v = conv_1_out[r][c];
+                float v = elem_bits_to_float(conv_1_out[r][c]);
                 if (v < c1_min) c1_min = v;
                 if (v > c1_max) c1_max = v;
-                if (v != 0) c1_nz++;
+                if (conv_1_out[r][c] != 0) c1_nz++;
             }
-        printf("  [REF] conv_1_out: min=%d, max=%d, nonzero=%d/%d\n",
+        printf("  [REF] conv_1_out: min=%.4f, max=%.4f, nonzero=%d/%d\n",
                c1_min, c1_max, c1_nz, (conv_1_params.I/4)*conv_1_params.J);
 
         // --- Run remaining layers ---
@@ -247,14 +249,14 @@ int main (int argc, char * argv[]) {
         static elem_t ref_average[1280][4] row_align(1);
         for (int batch = 0; batch < conv_52_params.batch_size; batch++)
             for (int channel = 0; channel < conv_52_params.out_channels; channel++) {
-                int sum = 0;
+                float sum = 0.0f;
                 for (int row = 0; row < conv_52_params.out_row_dim; row++)
                     for (int col = 0; col < conv_52_params.out_col_dim; col++) {
                         size_t r = batch * conv_52_params.out_row_dim * conv_52_params.out_col_dim + row * conv_52_params.out_col_dim + col;
-                        sum += conv_52_out[r][channel];
+                        sum += elem_bits_to_float(conv_52_out[r][channel]);
                     }
                 const int count = conv_52_params.out_row_dim * conv_52_params.out_col_dim;
-                ref_average[channel][batch] = (sum + count/2) / count;
+                ref_average[channel][batch] = float_to_elem_bits(sum / (float)count);
             }
 
         tiled_matmul_nn_auto(fc_53_params.I, fc_53_params.J, fc_53_params.K,
@@ -266,15 +268,16 @@ int main (int argc, char * argv[]) {
         const char *cifar10_classes[] = {"airplane","automobile","bird","cat","deer","dog","frog","horse","ship","truck"};
         for (int batch = 0; batch < 4; batch++) {
             int max_idx = 0;
-            elem_t max_val = fc_53_out[0][batch];
+            float max_val = elem_bits_to_float(fc_53_out[0][batch]);
             for (int i = 1; i < fc_53_params.out_features; i++) {
-                if (fc_53_out[i][batch] > max_val) {
-                    max_val = fc_53_out[i][batch];
+                float val = elem_bits_to_float(fc_53_out[i][batch]);
+                if (val > max_val) {
+                    max_val = val;
                     max_idx = i;
                 }
             }
-            printf("  [REF] Image %d: pred=%d (%s), score=%d\n",
-                   batch, max_idx, cifar10_classes[max_idx], (int)max_val);
+            printf("  [REF] Image %d: pred=%d (%s), score=%.4f\n",
+                   batch, max_idx, cifar10_classes[max_idx], max_val);
         }
         printf("  [REF] Expected labels: {3, 8, 8, 0} (cat, ship, ship, airplane)\n");
         uint64_t ref_end = get_time_ns();
@@ -912,15 +915,15 @@ int main (int argc, char * argv[]) {
 
         for (int batch = 0; batch < conv_52_params.batch_size; batch++) {
             for (int channel = 0; channel < conv_52_params.out_channels; channel++) {
-                int sum = 0;
+                float sum = 0.0f;
                 for (int row = 0; row < conv_52_params.out_row_dim; row++) {
                     for (int col = 0; col < conv_52_params.out_col_dim; col++) {
                         size_t r = batch * conv_52_params.out_row_dim * conv_52_params.out_col_dim + row * conv_52_params.out_col_dim + col;
-                        sum += conv_52_out[r][channel];
+                        sum += elem_bits_to_float(conv_52_out[r][channel]);
                     }
                 }
                 const int count = conv_52_params.out_row_dim * conv_52_params.out_col_dim;
-                average[channel][batch] = (sum + count/2) / count;
+                average[channel][batch] = float_to_elem_bits(sum / (float)count);
             }
         }
 
@@ -955,7 +958,7 @@ int main (int argc, char * argv[]) {
             }
 
             for (int i = 0; i < fc_53_params.out_features; i++) {
-                float score = fc_53_out[i][batch];
+                float score = elem_bits_to_float(fc_53_out[i][batch]);
                 for (int k = 0; k < TOP_K; k++) {
                     if (score > top_scores[k]) {
                         for (int j = TOP_K - 1; j > k; j--) {
