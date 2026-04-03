@@ -20,13 +20,33 @@
 
 #define TOP_K 10
 
+// Software ReLU6 clamp: MobileNetV2 uses ReLU6 (clamp to [0, 6]) but
+// Gemmini hardware only supports plain ReLU. We apply the upper clamp
+// in software after each RELU layer.
+// IMPORTANT: Must use float comparison, not raw uint16 comparison.
+// In FP16, negative values (including -0.0) have the sign bit set,
+// making their uint16 representation > 0x8000, which would incorrectly
+// compare as > 0x4600 (6.0) in unsigned integer arithmetic.
+static const elem_t RELU6_UPPER = 0x4600;  // float_to_fp16_bits(6.0f) = 0x4600
+
+static void clamp_relu6(elem_t *buf, int rows, int cols) {
+    for (int i = 0; i < rows; i++)
+        for (int j = 0; j < cols; j++) {
+            float val = elem_bits_to_float(buf[i * cols + j]);
+            if (val > 6.0f)
+                buf[i * cols + j] = RELU6_UPPER;
+            else if (val < 0.0f)
+                buf[i * cols + j] = 0;
+        }
+}
+
 // ---- Configuration: change these for your dataset ----
-#define NUM_IMAGES 50000
+#define NUM_IMAGES 10000
 #define BATCH_SIZE 4
 #define IMAGE_SIZE (224 * 224 * 3)
 
-#define IMAGES_BIN_FILE "imagenet_val_50000.bin"
-#define LABELS_TXT_FILE "imagenet_val_50000_labels.txt"
+#define IMAGES_BIN_FILE "imagenet_val_10000.bin"
+#define LABELS_TXT_FILE "imagenet_val_10000_labels.txt"
 // ------------------------------------------------------
 
 static inline uint64_t get_time_ns(void) {
@@ -53,6 +73,32 @@ int main (int argc, char * argv[]) {
 #endif
 
     gemmini_flush(0);
+
+    // Convert float weights to elem_t (FP16/BF16/etc.) bit patterns
+    printf("Converting float weights to elem_t bit patterns...\n");
+    convert_all_weights();
+    printf("Weight conversion done.\n");
+
+    // Verify weight conversion: print first 5 conv_1 weights (float original -> FP16 -> back to float)
+    printf("  [WEIGHT_VERIFY] conv_1_w original float: ");
+    for (int i = 0; i < 5; i++) printf("%.6f ", conv_1_w_float[0][i]);
+    printf("\n");
+    printf("  [WEIGHT_VERIFY] conv_1_w as FP16->float: ");
+    for (int i = 0; i < 5; i++) printf("%.6f ", elem_bits_to_float(conv_1_w[0][i]));
+    printf("\n");
+    printf("  [WEIGHT_VERIFY] conv_1_w raw uint16:     ");
+    for (int i = 0; i < 5; i++) printf("0x%04X ", conv_1_w[0][i]);
+    printf("\n");
+    printf("  [WEIGHT_VERIFY] conv_1_b (acc_t float):  ");
+    for (int i = 0; i < 5; i++) printf("%.6f ", conv_1_b[i]);
+    printf("\n");
+    // fc_53 weights too
+    printf("  [WEIGHT_VERIFY] fc_53_w original float:  ");
+    for (int i = 0; i < 5; i++) printf("%.6f ", fc_53_w_float[0][i]);
+    printf("\n");
+    printf("  [WEIGHT_VERIFY] fc_53_w as FP16->float:  ");
+    for (int i = 0; i < 5; i++) printf("%.6f ", elem_bits_to_float(fc_53_w[0][i]));
+    printf("\n");
 
     enum tiled_matmul_type_t tiled_matmul_type = WS;
 
@@ -170,81 +216,123 @@ int main (int argc, char * argv[]) {
                 conv_1_params.pool_size, 0, conv_1_params.pool_padding,
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_1_out, conv_1_params.I, conv_1_params.J);
 
         // Print images.h conv_1 stats
-        int c1_min = 127, c1_max = -128, c1_nz = 0;
+        float c1_min = 1e30f, c1_max = -1e30f;
+        int c1_nz = 0;
         for (int r = 0; r < conv_1_params.I / 4; r++)
             for (int c = 0; c < conv_1_params.J; c++) {
-                int v = conv_1_out[r][c];
+                float v = elem_bits_to_float(conv_1_out[r][c]);
                 if (v < c1_min) c1_min = v;
                 if (v > c1_max) c1_max = v;
-                if (v != 0) c1_nz++;
+                if (conv_1_out[r][c] != 0) c1_nz++;
             }
-        printf("  [REF] conv_1_out: min=%d, max=%d, nonzero=%d/%d\n",
+        printf("  [REF] conv_1_out: min=%.4f, max=%.4f, nonzero=%d/%d\n",
                c1_min, c1_max, c1_nz, (conv_1_params.I/4)*conv_1_params.J);
+        printf("  [REF] conv_1_out first5: [%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+               elem_bits_to_float(conv_1_out[0][0]),
+               elem_bits_to_float(conv_1_out[0][1]),
+               elem_bits_to_float(conv_1_out[0][2]),
+               elem_bits_to_float(conv_1_out[0][3]),
+               elem_bits_to_float(conv_1_out[0][4]));
 
         // Run remaining layers (same as main loop)
         tiled_conv_dw_auto(conv_dw_2_params.batch_size, conv_dw_2_params.in_row_dim, conv_dw_2_params.in_col_dim, conv_dw_2_params.in_channels, conv_dw_2_params.out_row_dim, conv_dw_2_params.out_col_dim, conv_dw_2_params.stride, conv_dw_2_params.padding, conv_dw_2_params.kernel_size, (elem_t*)conv_1_out, (elem_t*)conv_dw_2_w, (acc_t*)conv_dw_2_b, (elem_t*)conv_dw_2_out, RELU, conv_dw_2_params.output_scale, conv_dw_2_params.pool_size, 0, conv_dw_2_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_2_out, conv_dw_2_params.I, conv_dw_2_params.J);
         tiled_matmul_nn_auto(conv_3_params.I, conv_3_params.J, conv_3_params.K, conv_dw_2_out, conv_3_w, conv_3_b, conv_3_out, NO_ACTIVATION, conv_3_params.output_scale, true, tiled_matmul_type, check, "conv_3");
         tiled_matmul_nn_auto(conv_4_params.I, conv_4_params.J, conv_4_params.K, conv_3_out, conv_4_w, conv_4_b, conv_4_out, RELU, conv_4_params.output_scale, true, tiled_matmul_type, check, "conv_4");
+        clamp_relu6((elem_t*)conv_4_out, conv_4_params.I, conv_4_params.J);
         tiled_conv_dw_auto(conv_dw_5_params.batch_size, conv_dw_5_params.in_row_dim, conv_dw_5_params.in_col_dim, conv_dw_5_params.in_channels, conv_dw_5_params.out_row_dim, conv_dw_5_params.out_col_dim, conv_dw_5_params.stride, conv_dw_5_params.padding, conv_dw_5_params.kernel_size, (elem_t*)conv_4_out, (elem_t*)conv_dw_5_w, (acc_t*)conv_dw_5_b, (elem_t*)conv_dw_5_out, RELU, conv_dw_5_params.output_scale, conv_dw_5_params.pool_size, 0, conv_dw_5_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_5_out, conv_dw_5_params.I, conv_dw_5_params.J);
         tiled_matmul_nn_auto(conv_6_params.I, conv_6_params.J, conv_6_params.K, conv_dw_5_out, conv_6_w, conv_6_b, conv_6_out, NO_ACTIVATION, conv_6_params.output_scale, true, tiled_matmul_type, check, "conv_6");
         tiled_matmul_nn_auto(conv_7_params.I, conv_7_params.J, conv_7_params.K, conv_6_out, conv_7_w, conv_7_b, conv_7_out, RELU, conv_7_params.output_scale, true, tiled_matmul_type, check, "conv_7");
+        clamp_relu6((elem_t*)conv_7_out, conv_7_params.I, conv_7_params.J);
         tiled_conv_dw_auto(conv_dw_8_params.batch_size, conv_dw_8_params.in_row_dim, conv_dw_8_params.in_col_dim, conv_dw_8_params.in_channels, conv_dw_8_params.out_row_dim, conv_dw_8_params.out_col_dim, conv_dw_8_params.stride, conv_dw_8_params.padding, conv_dw_8_params.kernel_size, (elem_t*)conv_7_out, (elem_t*)conv_dw_8_w, (acc_t*)conv_dw_8_b, (elem_t*)conv_dw_8_out, RELU, conv_dw_8_params.output_scale, conv_dw_8_params.pool_size, 0, conv_dw_8_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_8_out, conv_dw_8_params.I, conv_dw_8_params.J);
         tiled_matmul_nn_auto(conv_9_params.I, conv_9_params.J, conv_9_params.K, conv_dw_8_out, conv_9_w, conv_9_b, conv_9_out, NO_ACTIVATION, conv_9_params.output_scale, true, tiled_matmul_type, check, "conv_9");
         tiled_resadd_auto(conv_9_params.I, conv_9_params.J, conv_9_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_6_out, conv_9_out, conv_9_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_10_params.I, conv_10_params.J, conv_10_params.K, conv_9_out, conv_10_w, conv_10_b, conv_10_out, RELU, conv_10_params.output_scale, true, tiled_matmul_type, check, "conv_10");
+        clamp_relu6((elem_t*)conv_10_out, conv_10_params.I, conv_10_params.J);
         tiled_conv_dw_auto(conv_dw_11_params.batch_size, conv_dw_11_params.in_row_dim, conv_dw_11_params.in_col_dim, conv_dw_11_params.in_channels, conv_dw_11_params.out_row_dim, conv_dw_11_params.out_col_dim, conv_dw_11_params.stride, conv_dw_11_params.padding, conv_dw_11_params.kernel_size, (elem_t*)conv_10_out, (elem_t*)conv_dw_11_w, (acc_t*)conv_dw_11_b, (elem_t*)conv_dw_11_out, RELU, conv_dw_11_params.output_scale, conv_dw_11_params.pool_size, 0, conv_dw_11_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_11_out, conv_dw_11_params.I, conv_dw_11_params.J);
         tiled_matmul_nn_auto(conv_12_params.I, conv_12_params.J, conv_12_params.K, conv_dw_11_out, conv_12_w, conv_12_b, conv_12_out, NO_ACTIVATION, conv_12_params.output_scale, true, tiled_matmul_type, check, "conv_12");
         tiled_matmul_nn_auto(conv_13_params.I, conv_13_params.J, conv_13_params.K, conv_12_out, conv_13_w, conv_13_b, conv_13_out, RELU, conv_13_params.output_scale, true, tiled_matmul_type, check, "conv_13");
+        clamp_relu6((elem_t*)conv_13_out, conv_13_params.I, conv_13_params.J);
         tiled_conv_dw_auto(conv_dw_14_params.batch_size, conv_dw_14_params.in_row_dim, conv_dw_14_params.in_col_dim, conv_dw_14_params.in_channels, conv_dw_14_params.out_row_dim, conv_dw_14_params.out_col_dim, conv_dw_14_params.stride, conv_dw_14_params.padding, conv_dw_14_params.kernel_size, (elem_t*)conv_13_out, (elem_t*)conv_dw_14_w, (acc_t*)conv_dw_14_b, (elem_t*)conv_dw_14_out, RELU, conv_dw_14_params.output_scale, conv_dw_14_params.pool_size, 0, conv_dw_14_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_14_out, conv_dw_14_params.I, conv_dw_14_params.J);
         tiled_matmul_nn_auto(conv_15_params.I, conv_15_params.J, conv_15_params.K, conv_dw_14_out, conv_15_w, conv_15_b, conv_15_out, NO_ACTIVATION, conv_15_params.output_scale, true, tiled_matmul_type, check, "conv_15");
         tiled_resadd_auto(conv_15_params.I, conv_15_params.J, conv_15_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_12_out, conv_15_out, conv_15_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_16_params.I, conv_16_params.J, conv_16_params.K, conv_15_out, conv_16_w, conv_16_b, conv_16_out, RELU, conv_16_params.output_scale, true, tiled_matmul_type, check, "conv_16");
+        clamp_relu6((elem_t*)conv_16_out, conv_16_params.I, conv_16_params.J);
         tiled_conv_dw_auto(conv_dw_17_params.batch_size, conv_dw_17_params.in_row_dim, conv_dw_17_params.in_col_dim, conv_dw_17_params.in_channels, conv_dw_17_params.out_row_dim, conv_dw_17_params.out_col_dim, conv_dw_17_params.stride, conv_dw_17_params.padding, conv_dw_17_params.kernel_size, (elem_t*)conv_16_out, (elem_t*)conv_dw_17_w, (acc_t*)conv_dw_17_b, (elem_t*)conv_dw_17_out, RELU, conv_dw_17_params.output_scale, conv_dw_17_params.pool_size, 0, conv_dw_17_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_17_out, conv_dw_17_params.I, conv_dw_17_params.J);
         tiled_matmul_nn_auto(conv_18_params.I, conv_18_params.J, conv_18_params.K, conv_dw_17_out, conv_18_w, conv_18_b, conv_18_out, NO_ACTIVATION, conv_18_params.output_scale, true, tiled_matmul_type, check, "conv_18");
         tiled_resadd_auto(conv_18_params.I, conv_18_params.J, conv_18_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_15_out, conv_18_out, conv_18_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_19_params.I, conv_19_params.J, conv_19_params.K, conv_18_out, conv_19_w, conv_19_b, conv_19_out, RELU, conv_19_params.output_scale, true, tiled_matmul_type, check, "conv_19");
+        clamp_relu6((elem_t*)conv_19_out, conv_19_params.I, conv_19_params.J);
         tiled_conv_dw_auto(conv_dw_20_params.batch_size, conv_dw_20_params.in_row_dim, conv_dw_20_params.in_col_dim, conv_dw_20_params.in_channels, conv_dw_20_params.out_row_dim, conv_dw_20_params.out_col_dim, conv_dw_20_params.stride, conv_dw_20_params.padding, conv_dw_20_params.kernel_size, (elem_t*)conv_19_out, (elem_t*)conv_dw_20_w, (acc_t*)conv_dw_20_b, (elem_t*)conv_dw_20_out, RELU, conv_dw_20_params.output_scale, conv_dw_20_params.pool_size, 0, conv_dw_20_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_20_out, conv_dw_20_params.I, conv_dw_20_params.J);
         tiled_matmul_nn_auto(conv_21_params.I, conv_21_params.J, conv_21_params.K, conv_dw_20_out, conv_21_w, conv_21_b, conv_21_out, NO_ACTIVATION, conv_21_params.output_scale, true, tiled_matmul_type, check, "conv_21");
         tiled_matmul_nn_auto(conv_22_params.I, conv_22_params.J, conv_22_params.K, conv_21_out, conv_22_w, conv_22_b, conv_22_out, RELU, conv_22_params.output_scale, true, tiled_matmul_type, check, "conv_22");
+        clamp_relu6((elem_t*)conv_22_out, conv_22_params.I, conv_22_params.J);
         tiled_conv_dw_auto(conv_dw_23_params.batch_size, conv_dw_23_params.in_row_dim, conv_dw_23_params.in_col_dim, conv_dw_23_params.in_channels, conv_dw_23_params.out_row_dim, conv_dw_23_params.out_col_dim, conv_dw_23_params.stride, conv_dw_23_params.padding, conv_dw_23_params.kernel_size, (elem_t*)conv_22_out, (elem_t*)conv_dw_23_w, (acc_t*)conv_dw_23_b, (elem_t*)conv_dw_23_out, RELU, conv_dw_23_params.output_scale, conv_dw_23_params.pool_size, 0, conv_dw_23_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_23_out, conv_dw_23_params.I, conv_dw_23_params.J);
         tiled_matmul_nn_auto(conv_24_params.I, conv_24_params.J, conv_24_params.K, conv_dw_23_out, conv_24_w, conv_24_b, conv_24_out, NO_ACTIVATION, conv_24_params.output_scale, true, tiled_matmul_type, check, "conv_24");
         tiled_resadd_auto(conv_24_params.I, conv_24_params.J, conv_24_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_21_out, conv_24_out, conv_24_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_25_params.I, conv_25_params.J, conv_25_params.K, conv_24_out, conv_25_w, conv_25_b, conv_25_out, RELU, conv_25_params.output_scale, true, tiled_matmul_type, check, "conv_25");
+        clamp_relu6((elem_t*)conv_25_out, conv_25_params.I, conv_25_params.J);
         tiled_conv_dw_auto(conv_dw_26_params.batch_size, conv_dw_26_params.in_row_dim, conv_dw_26_params.in_col_dim, conv_dw_26_params.in_channels, conv_dw_26_params.out_row_dim, conv_dw_26_params.out_col_dim, conv_dw_26_params.stride, conv_dw_26_params.padding, conv_dw_26_params.kernel_size, (elem_t*)conv_25_out, (elem_t*)conv_dw_26_w, (acc_t*)conv_dw_26_b, (elem_t*)conv_dw_26_out, RELU, conv_dw_26_params.output_scale, conv_dw_26_params.pool_size, 0, conv_dw_26_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_26_out, conv_dw_26_params.I, conv_dw_26_params.J);
         tiled_matmul_nn_auto(conv_27_params.I, conv_27_params.J, conv_27_params.K, conv_dw_26_out, conv_27_w, conv_27_b, conv_27_out, NO_ACTIVATION, conv_27_params.output_scale, true, tiled_matmul_type, check, "conv_27");
         tiled_resadd_auto(conv_27_params.I, conv_27_params.J, conv_27_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_24_out, conv_27_out, conv_27_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_28_params.I, conv_28_params.J, conv_28_params.K, conv_27_out, conv_28_w, conv_28_b, conv_28_out, RELU, conv_28_params.output_scale, true, tiled_matmul_type, check, "conv_28");
+        clamp_relu6((elem_t*)conv_28_out, conv_28_params.I, conv_28_params.J);
         tiled_conv_dw_auto(conv_dw_29_params.batch_size, conv_dw_29_params.in_row_dim, conv_dw_29_params.in_col_dim, conv_dw_29_params.in_channels, conv_dw_29_params.out_row_dim, conv_dw_29_params.out_col_dim, conv_dw_29_params.stride, conv_dw_29_params.padding, conv_dw_29_params.kernel_size, (elem_t*)conv_28_out, (elem_t*)conv_dw_29_w, (acc_t*)conv_dw_29_b, (elem_t*)conv_dw_29_out, RELU, conv_dw_29_params.output_scale, conv_dw_29_params.pool_size, 0, conv_dw_29_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_29_out, conv_dw_29_params.I, conv_dw_29_params.J);
         tiled_matmul_nn_auto(conv_30_params.I, conv_30_params.J, conv_30_params.K, conv_dw_29_out, conv_30_w, conv_30_b, conv_30_out, NO_ACTIVATION, conv_30_params.output_scale, true, tiled_matmul_type, check, "conv_30");
         tiled_resadd_auto(conv_30_params.I, conv_30_params.J, conv_30_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_27_out, conv_30_out, conv_30_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_31_params.I, conv_31_params.J, conv_31_params.K, conv_30_out, conv_31_w, conv_31_b, conv_31_out, RELU, conv_31_params.output_scale, true, tiled_matmul_type, check, "conv_31");
+        clamp_relu6((elem_t*)conv_31_out, conv_31_params.I, conv_31_params.J);
         tiled_conv_dw_auto(conv_dw_32_params.batch_size, conv_dw_32_params.in_row_dim, conv_dw_32_params.in_col_dim, conv_dw_32_params.in_channels, conv_dw_32_params.out_row_dim, conv_dw_32_params.out_col_dim, conv_dw_32_params.stride, conv_dw_32_params.padding, conv_dw_32_params.kernel_size, (elem_t*)conv_31_out, (elem_t*)conv_dw_32_w, (acc_t*)conv_dw_32_b, (elem_t*)conv_dw_32_out, RELU, conv_dw_32_params.output_scale, conv_dw_32_params.pool_size, 0, conv_dw_32_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_32_out, conv_dw_32_params.I, conv_dw_32_params.J);
         tiled_matmul_nn_auto(conv_33_params.I, conv_33_params.J, conv_33_params.K, conv_dw_32_out, conv_33_w, conv_33_b, conv_33_out, NO_ACTIVATION, conv_33_params.output_scale, true, tiled_matmul_type, check, "conv_33");
         tiled_matmul_nn_auto(conv_34_params.I, conv_34_params.J, conv_34_params.K, conv_33_out, conv_34_w, conv_34_b, conv_34_out, RELU, conv_34_params.output_scale, true, tiled_matmul_type, check, "conv_34");
+        clamp_relu6((elem_t*)conv_34_out, conv_34_params.I, conv_34_params.J);
         tiled_conv_dw_auto(conv_dw_35_params.batch_size, conv_dw_35_params.in_row_dim, conv_dw_35_params.in_col_dim, conv_dw_35_params.in_channels, conv_dw_35_params.out_row_dim, conv_dw_35_params.out_col_dim, conv_dw_35_params.stride, conv_dw_35_params.padding, conv_dw_35_params.kernel_size, (elem_t*)conv_34_out, (elem_t*)conv_dw_35_w, (acc_t*)conv_dw_35_b, (elem_t*)conv_dw_35_out, RELU, conv_dw_35_params.output_scale, conv_dw_35_params.pool_size, 0, conv_dw_35_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_35_out, conv_dw_35_params.I, conv_dw_35_params.J);
         tiled_matmul_nn_auto(conv_36_params.I, conv_36_params.J, conv_36_params.K, conv_dw_35_out, conv_36_w, conv_36_b, conv_36_out, NO_ACTIVATION, conv_36_params.output_scale, true, tiled_matmul_type, check, "conv_36");
         tiled_resadd_auto(conv_36_params.I, conv_36_params.J, conv_36_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_33_out, conv_36_out, conv_36_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_37_params.I, conv_37_params.J, conv_37_params.K, conv_36_out, conv_37_w, conv_37_b, conv_37_out, RELU, conv_37_params.output_scale, true, tiled_matmul_type, check, "conv_37");
+        clamp_relu6((elem_t*)conv_37_out, conv_37_params.I, conv_37_params.J);
         tiled_conv_dw_auto(conv_dw_38_params.batch_size, conv_dw_38_params.in_row_dim, conv_dw_38_params.in_col_dim, conv_dw_38_params.in_channels, conv_dw_38_params.out_row_dim, conv_dw_38_params.out_col_dim, conv_dw_38_params.stride, conv_dw_38_params.padding, conv_dw_38_params.kernel_size, (elem_t*)conv_37_out, (elem_t*)conv_dw_38_w, (acc_t*)conv_dw_38_b, (elem_t*)conv_dw_38_out, RELU, conv_dw_38_params.output_scale, conv_dw_38_params.pool_size, 0, conv_dw_38_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_38_out, conv_dw_38_params.I, conv_dw_38_params.J);
         tiled_matmul_nn_auto(conv_39_params.I, conv_39_params.J, conv_39_params.K, conv_dw_38_out, conv_39_w, conv_39_b, conv_39_out, NO_ACTIVATION, conv_39_params.output_scale, true, tiled_matmul_type, check, "conv_39");
         tiled_resadd_auto(conv_39_params.I, conv_39_params.J, conv_39_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_36_out, conv_39_out, conv_39_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_40_params.I, conv_40_params.J, conv_40_params.K, conv_39_out, conv_40_w, conv_40_b, conv_40_out, RELU, conv_40_params.output_scale, true, tiled_matmul_type, check, "conv_40");
+        clamp_relu6((elem_t*)conv_40_out, conv_40_params.I, conv_40_params.J);
         tiled_conv_dw_auto(conv_dw_41_params.batch_size, conv_dw_41_params.in_row_dim, conv_dw_41_params.in_col_dim, conv_dw_41_params.in_channels, conv_dw_41_params.out_row_dim, conv_dw_41_params.out_col_dim, conv_dw_41_params.stride, conv_dw_41_params.padding, conv_dw_41_params.kernel_size, (elem_t*)conv_40_out, (elem_t*)conv_dw_41_w, (acc_t*)conv_dw_41_b, (elem_t*)conv_dw_41_out, RELU, conv_dw_41_params.output_scale, conv_dw_41_params.pool_size, 0, conv_dw_41_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_41_out, conv_dw_41_params.I, conv_dw_41_params.J);
         tiled_matmul_nn_auto(conv_42_params.I, conv_42_params.J, conv_42_params.K, conv_dw_41_out, conv_42_w, conv_42_b, conv_42_out, NO_ACTIVATION, conv_42_params.output_scale, true, tiled_matmul_type, check, "conv_42");
         tiled_matmul_nn_auto(conv_43_params.I, conv_43_params.J, conv_43_params.K, conv_42_out, conv_43_w, conv_43_b, conv_43_out, RELU, conv_43_params.output_scale, true, tiled_matmul_type, check, "conv_43");
+        clamp_relu6((elem_t*)conv_43_out, conv_43_params.I, conv_43_params.J);
         tiled_conv_dw_auto(conv_dw_44_params.batch_size, conv_dw_44_params.in_row_dim, conv_dw_44_params.in_col_dim, conv_dw_44_params.in_channels, conv_dw_44_params.out_row_dim, conv_dw_44_params.out_col_dim, conv_dw_44_params.stride, conv_dw_44_params.padding, conv_dw_44_params.kernel_size, (elem_t*)conv_43_out, (elem_t*)conv_dw_44_w, (acc_t*)conv_dw_44_b, (elem_t*)conv_dw_44_out, RELU, conv_dw_44_params.output_scale, conv_dw_44_params.pool_size, 0, conv_dw_44_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_44_out, conv_dw_44_params.I, conv_dw_44_params.J);
         tiled_matmul_nn_auto(conv_45_params.I, conv_45_params.J, conv_45_params.K, conv_dw_44_out, conv_45_w, conv_45_b, conv_45_out, NO_ACTIVATION, conv_45_params.output_scale, true, tiled_matmul_type, check, "conv_45");
         tiled_resadd_auto(conv_45_params.I, conv_45_params.J, conv_45_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_42_out, conv_45_out, conv_45_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_46_params.I, conv_46_params.J, conv_46_params.K, conv_45_out, conv_46_w, conv_46_b, conv_46_out, RELU, conv_46_params.output_scale, true, tiled_matmul_type, check, "conv_46");
+        clamp_relu6((elem_t*)conv_46_out, conv_46_params.I, conv_46_params.J);
         tiled_conv_dw_auto(conv_dw_47_params.batch_size, conv_dw_47_params.in_row_dim, conv_dw_47_params.in_col_dim, conv_dw_47_params.in_channels, conv_dw_47_params.out_row_dim, conv_dw_47_params.out_col_dim, conv_dw_47_params.stride, conv_dw_47_params.padding, conv_dw_47_params.kernel_size, (elem_t*)conv_46_out, (elem_t*)conv_dw_47_w, (acc_t*)conv_dw_47_b, (elem_t*)conv_dw_47_out, RELU, conv_dw_47_params.output_scale, conv_dw_47_params.pool_size, 0, conv_dw_47_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_47_out, conv_dw_47_params.I, conv_dw_47_params.J);
         tiled_matmul_nn_auto(conv_48_params.I, conv_48_params.J, conv_48_params.K, conv_dw_47_out, conv_48_w, conv_48_b, conv_48_out, NO_ACTIVATION, conv_48_params.output_scale, true, tiled_matmul_type, check, "conv_48");
         tiled_resadd_auto(conv_48_params.I, conv_48_params.J, conv_48_params.res_scale, MVIN_SCALE_IDENTITY, ACC_SCALE_IDENTITY, conv_45_out, conv_48_out, conv_48_out, false, tiled_matmul_type == CPU ? CPU : WS);
         tiled_matmul_nn_auto(conv_49_params.I, conv_49_params.J, conv_49_params.K, conv_48_out, conv_49_w, conv_49_b, conv_49_out, RELU, conv_49_params.output_scale, true, tiled_matmul_type, check, "conv_49");
+        clamp_relu6((elem_t*)conv_49_out, conv_49_params.I, conv_49_params.J);
         tiled_conv_dw_auto(conv_dw_50_params.batch_size, conv_dw_50_params.in_row_dim, conv_dw_50_params.in_col_dim, conv_dw_50_params.in_channels, conv_dw_50_params.out_row_dim, conv_dw_50_params.out_col_dim, conv_dw_50_params.stride, conv_dw_50_params.padding, conv_dw_50_params.kernel_size, (elem_t*)conv_49_out, (elem_t*)conv_dw_50_w, (acc_t*)conv_dw_50_b, (elem_t*)conv_dw_50_out, RELU, conv_dw_50_params.output_scale, conv_dw_50_params.pool_size, 0, conv_dw_50_params.pool_padding, tiled_matmul_type);
+        clamp_relu6((elem_t*)conv_dw_50_out, conv_dw_50_params.I, conv_dw_50_params.J);
         tiled_matmul_nn_auto(conv_51_params.I, conv_51_params.J, conv_51_params.K, conv_dw_50_out, conv_51_w, conv_51_b, conv_51_out, NO_ACTIVATION, conv_51_params.output_scale, true, tiled_matmul_type, check, "conv_51");
         tiled_matmul_nn_auto(conv_52_params.I, conv_52_params.J, conv_52_params.K, conv_51_out, conv_52_w, conv_52_b, conv_52_out, RELU, conv_52_params.output_scale, true, tiled_matmul_type, check, "conv_52");
+        clamp_relu6((elem_t*)conv_52_out, conv_52_params.I, conv_52_params.J);
 
         // Print images.h conv_52 and fc_53 stats
         static elem_t ref_average[1280][4] row_align(1);
@@ -294,6 +382,17 @@ int main (int argc, char * argv[]) {
             if (v > fc_max) fc_max = v;
         }
         printf("  [REF] fc_53_out: min=%.4f, max=%.4f\n", fc_min, fc_max);
+        printf("  [REF] fc_53_out first5: [%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+               elem_bits_to_float(fc_53_out[0][0]),
+               elem_bits_to_float(fc_53_out[1][0]),
+               elem_bits_to_float(fc_53_out[2][0]),
+               elem_bits_to_float(fc_53_out[3][0]),
+               elem_bits_to_float(fc_53_out[4][0]));
+        // Print scores for key classes to compare with Python
+        printf("  [REF] fc_53_out[419]=%f, [885]=%f, [911]=%f\n",
+               elem_bits_to_float(fc_53_out[419][0]),
+               elem_bits_to_float(fc_53_out[885][0]),
+               elem_bits_to_float(fc_53_out[911][0]));
 
         // Print predictions for images.h
         for (int batch = 0; batch < 4; batch++) {
@@ -308,8 +407,11 @@ int main (int argc, char * argv[]) {
             }
             printf("  [REF] Image %d: pred=%d (score=%.4f)\n", batch, max_idx, max_val);
         }
-        int ref_correct[] = {75, 900, 125, 897};
-        printf("  [REF] Expected: {75, 900, 125, 897}\n");
+        // NOTE: images.h contains synthetic random data with placeholder labels {65, 970, 230, 809}.
+        // The model predicts class 911 for all 4 synthetic images (verified with Python).
+        int ref_correct[] = {65, 970, 230, 809};
+        printf("  [REF] Expected (images.h labels): {65, 970, 230, 809}\n");
+        printf("  [REF] Note: synthetic images -> model predicts 911 for all (expected)\n");
         uint64_t ref_end = get_time_ns();
         printf("  [REF] Time: %llu ns\n", (unsigned long long)(ref_end - start));
     }
@@ -317,12 +419,40 @@ int main (int argc, char * argv[]) {
 
     for (int batch_idx = 0; batch_idx < num_batches; batch_idx++) {
 
-        // Stream one batch from disk
-        size_t items_read = fread(batch_images, sizeof(elem_t), BATCH_SIZE * IMAGE_SIZE, fp_images);
-        if (items_read != (size_t)(BATCH_SIZE * IMAGE_SIZE)) {
-            printf("Warning: short read at batch %d (got %zu of %d bytes), stopping\n",
-                   batch_idx, items_read, BATCH_SIZE * IMAGE_SIZE);
-            break;
+        // Stream one batch from disk.
+        // Binary file uses same format as int8 mobilenet_v1.c:
+        //   int8 values = (original_uint8_pixel - 128), 1 byte per pixel.
+        // Float model (google/mobilenet_v2_1.0_224, mean=0.5 std=0.5) needs:
+        //   normalized = original_pixel / 127.5 - 1.0
+        //             = (int8_value + 128) / 127.5 - 1.0
+        {
+            static int8_t raw_batch[BATCH_SIZE * IMAGE_SIZE];
+            size_t items_read = fread(raw_batch, 1, BATCH_SIZE * IMAGE_SIZE, fp_images);
+            if (items_read != (size_t)(BATCH_SIZE * IMAGE_SIZE)) {
+                printf("Warning: short read at batch %d (got %zu of %d), stopping\n",
+                       batch_idx, items_read, BATCH_SIZE * IMAGE_SIZE);
+                break;
+            }
+            for (int i = 0; i < BATCH_SIZE * IMAGE_SIZE; i++) {
+                float pixel = (float)((int)raw_batch[i] + 128);  // recover uint8 [0,255]
+                batch_images[i] = float_to_elem_bits(pixel / 127.5f - 1.0f);
+            }
+
+            // INPUT VERIFICATION: Print raw bytes and converted values for first batch
+            if (batch_idx == 0) {
+                printf("  [INPUT_VERIFY] First 10 raw int8 bytes: ");
+                for (int i = 0; i < 10; i++) printf("%d ", (int)raw_batch[i]);
+                printf("\n");
+                printf("  [INPUT_VERIFY] First 10 normalized floats: ");
+                for (int i = 0; i < 10; i++)
+                    printf("%.4f ", elem_bits_to_float(batch_images[i]));
+                printf("\n");
+                // Compute checksum (sum of all float values for image 0)
+                double input_sum = 0.0;
+                for (int i = 0; i < IMAGE_SIZE; i++)
+                    input_sum += elem_bits_to_float(batch_images[i]);
+                printf("  [INPUT_VERIFY] Image 0 float sum: %.2f\n", input_sum);
+            }
         }
 
         elem_t *current_images = batch_images;
@@ -356,6 +486,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_1_out, conv_1_params.I, conv_1_params.J);
 
         // ====================== conv_dw_2 ======================
         if (!conv) {
@@ -378,6 +509,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_2_out, conv_dw_2_params.I, conv_dw_2_params.J);
 
         // ====================== conv_3 ======================
         tiled_matmul_nn_auto(conv_3_params.I, conv_3_params.J, conv_3_params.K,
@@ -385,11 +517,29 @@ int main (int argc, char * argv[]) {
             NO_ACTIVATION, conv_3_params.output_scale, true,
             tiled_matmul_type, check, "conv_3");
 
+        // Layer diagnostic: conv_3 (first bottleneck projection, NO_ACTIVATION)
+        if (batch_idx == 0) {
+            float s = 0; double sum = 0;
+            for (int r = 0; r < conv_3_params.I / 4; r++)
+                for (int c = 0; c < conv_3_params.J; c++) {
+                    float v = elem_bits_to_float(conv_3_out[r][c]);
+                    sum += v;
+                }
+            printf("  [LAYER] conv_3: sum=%.2f, first5=[%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+                   sum,
+                   elem_bits_to_float(conv_3_out[0][0]),
+                   elem_bits_to_float(conv_3_out[0][1]),
+                   elem_bits_to_float(conv_3_out[0][2]),
+                   elem_bits_to_float(conv_3_out[0][3]),
+                   elem_bits_to_float(conv_3_out[0][4]));
+        }
+
         // ====================== conv_4 ======================
         tiled_matmul_nn_auto(conv_4_params.I, conv_4_params.J, conv_4_params.K,
             conv_3_out, conv_4_w, conv_4_b, conv_4_out,
             RELU, conv_4_params.output_scale, true,
             tiled_matmul_type, check, "conv_4");
+        clamp_relu6((elem_t*)conv_4_out, conv_4_params.I, conv_4_params.J);
 
         // ====================== conv_dw_5 ======================
         if (!conv) {
@@ -412,6 +562,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_5_out, conv_dw_5_params.I, conv_dw_5_params.J);
 
         // ====================== conv_6 ======================
         tiled_matmul_nn_auto(conv_6_params.I, conv_6_params.J, conv_6_params.K,
@@ -424,6 +575,7 @@ int main (int argc, char * argv[]) {
             conv_6_out, conv_7_w, conv_7_b, conv_7_out,
             RELU, conv_7_params.output_scale, true,
             tiled_matmul_type, check, "conv_7");
+        clamp_relu6((elem_t*)conv_7_out, conv_7_params.I, conv_7_params.J);
 
         // ====================== conv_dw_8 ======================
         if (!conv) {
@@ -446,6 +598,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_8_out, conv_dw_8_params.I, conv_dw_8_params.J);
 
         // ====================== conv_9 ======================
         tiled_matmul_nn_auto(conv_9_params.I, conv_9_params.J, conv_9_params.K,
@@ -464,11 +617,27 @@ int main (int argc, char * argv[]) {
             false,
             tiled_matmul_type == CPU ? CPU : WS);
 
+        // Layer diagnostic: conv_9 after resadd (first residual block output)
+        if (batch_idx == 0) {
+            double sum = 0;
+            for (int r = 0; r < conv_9_params.I / 4; r++)
+                for (int c = 0; c < conv_9_params.J; c++)
+                    sum += elem_bits_to_float(conv_9_out[r][c]);
+            printf("  [LAYER] conv_9+res: sum=%.2f, first5=[%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+                   sum,
+                   elem_bits_to_float(conv_9_out[0][0]),
+                   elem_bits_to_float(conv_9_out[0][1]),
+                   elem_bits_to_float(conv_9_out[0][2]),
+                   elem_bits_to_float(conv_9_out[0][3]),
+                   elem_bits_to_float(conv_9_out[0][4]));
+        }
+
         // ====================== conv_10 ======================
         tiled_matmul_nn_auto(conv_10_params.I, conv_10_params.J, conv_10_params.K,
             conv_9_out, conv_10_w, conv_10_b, conv_10_out,
             RELU, conv_10_params.output_scale, true,
             tiled_matmul_type, check, "conv_10");
+        clamp_relu6((elem_t*)conv_10_out, conv_10_params.I, conv_10_params.J);
 
         // ====================== conv_dw_11 ======================
         if (!conv) {
@@ -491,6 +660,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_11_out, conv_dw_11_params.I, conv_dw_11_params.J);
 
         // ====================== conv_12 ======================
         tiled_matmul_nn_auto(conv_12_params.I, conv_12_params.J, conv_12_params.K,
@@ -503,6 +673,7 @@ int main (int argc, char * argv[]) {
             conv_12_out, conv_13_w, conv_13_b, conv_13_out,
             RELU, conv_13_params.output_scale, true,
             tiled_matmul_type, check, "conv_13");
+        clamp_relu6((elem_t*)conv_13_out, conv_13_params.I, conv_13_params.J);
 
         // ====================== conv_dw_14 ======================
         if (!conv) {
@@ -525,6 +696,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_14_out, conv_dw_14_params.I, conv_dw_14_params.J);
 
         // ====================== conv_15 ======================
         tiled_matmul_nn_auto(conv_15_params.I, conv_15_params.J, conv_15_params.K,
@@ -548,6 +720,7 @@ int main (int argc, char * argv[]) {
             conv_15_out, conv_16_w, conv_16_b, conv_16_out,
             RELU, conv_16_params.output_scale, true,
             tiled_matmul_type, check, "conv_16");
+        clamp_relu6((elem_t*)conv_16_out, conv_16_params.I, conv_16_params.J);
 
         // ====================== conv_dw_17 ======================
         if (!conv) {
@@ -570,6 +743,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_17_out, conv_dw_17_params.I, conv_dw_17_params.J);
 
         // ====================== conv_18 ======================
         tiled_matmul_nn_auto(conv_18_params.I, conv_18_params.J, conv_18_params.K,
@@ -593,6 +767,7 @@ int main (int argc, char * argv[]) {
             conv_18_out, conv_19_w, conv_19_b, conv_19_out,
             RELU, conv_19_params.output_scale, true,
             tiled_matmul_type, check, "conv_19");
+        clamp_relu6((elem_t*)conv_19_out, conv_19_params.I, conv_19_params.J);
 
         // ====================== conv_dw_20 ======================
         if (!conv) {
@@ -615,6 +790,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_20_out, conv_dw_20_params.I, conv_dw_20_params.J);
 
         // ====================== conv_21 ======================
         tiled_matmul_nn_auto(conv_21_params.I, conv_21_params.J, conv_21_params.K,
@@ -627,6 +803,7 @@ int main (int argc, char * argv[]) {
             conv_21_out, conv_22_w, conv_22_b, conv_22_out,
             RELU, conv_22_params.output_scale, true,
             tiled_matmul_type, check, "conv_22");
+        clamp_relu6((elem_t*)conv_22_out, conv_22_params.I, conv_22_params.J);
 
         // ====================== conv_dw_23 ======================
         if (!conv) {
@@ -649,6 +826,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_23_out, conv_dw_23_params.I, conv_dw_23_params.J);
 
         // ====================== conv_24 ======================
         tiled_matmul_nn_auto(conv_24_params.I, conv_24_params.J, conv_24_params.K,
@@ -672,6 +850,7 @@ int main (int argc, char * argv[]) {
             conv_24_out, conv_25_w, conv_25_b, conv_25_out,
             RELU, conv_25_params.output_scale, true,
             tiled_matmul_type, check, "conv_25");
+        clamp_relu6((elem_t*)conv_25_out, conv_25_params.I, conv_25_params.J);
 
         // ====================== conv_dw_26 ======================
         if (!conv) {
@@ -694,6 +873,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_26_out, conv_dw_26_params.I, conv_dw_26_params.J);
 
         // ====================== conv_27 ======================
         tiled_matmul_nn_auto(conv_27_params.I, conv_27_params.J, conv_27_params.K,
@@ -717,6 +897,7 @@ int main (int argc, char * argv[]) {
             conv_27_out, conv_28_w, conv_28_b, conv_28_out,
             RELU, conv_28_params.output_scale, true,
             tiled_matmul_type, check, "conv_28");
+        clamp_relu6((elem_t*)conv_28_out, conv_28_params.I, conv_28_params.J);
 
         // ====================== conv_dw_29 ======================
         if (!conv) {
@@ -739,6 +920,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_29_out, conv_dw_29_params.I, conv_dw_29_params.J);
 
         // ====================== conv_30 ======================
         tiled_matmul_nn_auto(conv_30_params.I, conv_30_params.J, conv_30_params.K,
@@ -762,6 +944,7 @@ int main (int argc, char * argv[]) {
             conv_30_out, conv_31_w, conv_31_b, conv_31_out,
             RELU, conv_31_params.output_scale, true,
             tiled_matmul_type, check, "conv_31");
+        clamp_relu6((elem_t*)conv_31_out, conv_31_params.I, conv_31_params.J);
 
         // ====================== conv_dw_32 ======================
         if (!conv) {
@@ -784,6 +967,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_32_out, conv_dw_32_params.I, conv_dw_32_params.J);
 
         // ====================== conv_33 ======================
         tiled_matmul_nn_auto(conv_33_params.I, conv_33_params.J, conv_33_params.K,
@@ -791,11 +975,32 @@ int main (int argc, char * argv[]) {
             NO_ACTIVATION, conv_33_params.output_scale, true,
             tiled_matmul_type, check, "conv_33");
 
+        // Layer diagnostic: conv_33 (mid-network bottleneck projection)
+        if (batch_idx == 0) {
+            double sum = 0;
+            float mn = 1e30f, mx = -1e30f;
+            for (int r = 0; r < conv_33_params.I / 4; r++)
+                for (int c = 0; c < conv_33_params.J; c++) {
+                    float v = elem_bits_to_float(conv_33_out[r][c]);
+                    sum += v;
+                    if (v < mn) mn = v;
+                    if (v > mx) mx = v;
+                }
+            printf("  [LAYER] conv_33: sum=%.2f, min=%.4f, max=%.4f, first5=[%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+                   sum, mn, mx,
+                   elem_bits_to_float(conv_33_out[0][0]),
+                   elem_bits_to_float(conv_33_out[0][1]),
+                   elem_bits_to_float(conv_33_out[0][2]),
+                   elem_bits_to_float(conv_33_out[0][3]),
+                   elem_bits_to_float(conv_33_out[0][4]));
+        }
+
         // ====================== conv_34 ======================
         tiled_matmul_nn_auto(conv_34_params.I, conv_34_params.J, conv_34_params.K,
             conv_33_out, conv_34_w, conv_34_b, conv_34_out,
             RELU, conv_34_params.output_scale, true,
             tiled_matmul_type, check, "conv_34");
+        clamp_relu6((elem_t*)conv_34_out, conv_34_params.I, conv_34_params.J);
 
         // ====================== conv_dw_35 ======================
         if (!conv) {
@@ -818,6 +1023,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_35_out, conv_dw_35_params.I, conv_dw_35_params.J);
 
         // ====================== conv_36 ======================
         tiled_matmul_nn_auto(conv_36_params.I, conv_36_params.J, conv_36_params.K,
@@ -841,6 +1047,7 @@ int main (int argc, char * argv[]) {
             conv_36_out, conv_37_w, conv_37_b, conv_37_out,
             RELU, conv_37_params.output_scale, true,
             tiled_matmul_type, check, "conv_37");
+        clamp_relu6((elem_t*)conv_37_out, conv_37_params.I, conv_37_params.J);
 
         // ====================== conv_dw_38 ======================
         if (!conv) {
@@ -863,6 +1070,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_38_out, conv_dw_38_params.I, conv_dw_38_params.J);
 
         // ====================== conv_39 ======================
         tiled_matmul_nn_auto(conv_39_params.I, conv_39_params.J, conv_39_params.K,
@@ -886,6 +1094,7 @@ int main (int argc, char * argv[]) {
             conv_39_out, conv_40_w, conv_40_b, conv_40_out,
             RELU, conv_40_params.output_scale, true,
             tiled_matmul_type, check, "conv_40");
+        clamp_relu6((elem_t*)conv_40_out, conv_40_params.I, conv_40_params.J);
 
         // ====================== conv_dw_41 ======================
         if (!conv) {
@@ -908,6 +1117,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_41_out, conv_dw_41_params.I, conv_dw_41_params.J);
 
         // ====================== conv_42 ======================
         tiled_matmul_nn_auto(conv_42_params.I, conv_42_params.J, conv_42_params.K,
@@ -920,6 +1130,7 @@ int main (int argc, char * argv[]) {
             conv_42_out, conv_43_w, conv_43_b, conv_43_out,
             RELU, conv_43_params.output_scale, true,
             tiled_matmul_type, check, "conv_43");
+        clamp_relu6((elem_t*)conv_43_out, conv_43_params.I, conv_43_params.J);
 
         // ====================== conv_dw_44 ======================
         if (!conv) {
@@ -942,6 +1153,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_44_out, conv_dw_44_params.I, conv_dw_44_params.J);
 
         // ====================== conv_45 ======================
         tiled_matmul_nn_auto(conv_45_params.I, conv_45_params.J, conv_45_params.K,
@@ -965,6 +1177,7 @@ int main (int argc, char * argv[]) {
             conv_45_out, conv_46_w, conv_46_b, conv_46_out,
             RELU, conv_46_params.output_scale, true,
             tiled_matmul_type, check, "conv_46");
+        clamp_relu6((elem_t*)conv_46_out, conv_46_params.I, conv_46_params.J);
 
         // ====================== conv_dw_47 ======================
         if (!conv) {
@@ -987,6 +1200,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_47_out, conv_dw_47_params.I, conv_dw_47_params.J);
 
         // ====================== conv_48 ======================
         tiled_matmul_nn_auto(conv_48_params.I, conv_48_params.J, conv_48_params.K,
@@ -1010,6 +1224,7 @@ int main (int argc, char * argv[]) {
             conv_48_out, conv_49_w, conv_49_b, conv_49_out,
             RELU, conv_49_params.output_scale, true,
             tiled_matmul_type, check, "conv_49");
+        clamp_relu6((elem_t*)conv_49_out, conv_49_params.I, conv_49_params.J);
 
         // ====================== conv_dw_50 ======================
         if (!conv) {
@@ -1032,6 +1247,7 @@ int main (int argc, char * argv[]) {
 
                 tiled_matmul_type);
         }
+        clamp_relu6((elem_t*)conv_dw_50_out, conv_dw_50_params.I, conv_dw_50_params.J);
 
         // ====================== conv_51 ======================
         tiled_matmul_nn_auto(conv_51_params.I, conv_51_params.J, conv_51_params.K,
@@ -1039,11 +1255,32 @@ int main (int argc, char * argv[]) {
             NO_ACTIVATION, conv_51_params.output_scale, true,
             tiled_matmul_type, check, "conv_51");
 
+        // Layer diagnostic: conv_51 (penultimate layer)
+        if (batch_idx == 0) {
+            double sum = 0;
+            float mn = 1e30f, mx = -1e30f;
+            for (int r = 0; r < conv_51_params.I / 4; r++)
+                for (int c = 0; c < conv_51_params.J; c++) {
+                    float v = elem_bits_to_float(conv_51_out[r][c]);
+                    sum += v;
+                    if (v < mn) mn = v;
+                    if (v > mx) mx = v;
+                }
+            printf("  [LAYER] conv_51: sum=%.2f, min=%.4f, max=%.4f, first5=[%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+                   sum, mn, mx,
+                   elem_bits_to_float(conv_51_out[0][0]),
+                   elem_bits_to_float(conv_51_out[0][1]),
+                   elem_bits_to_float(conv_51_out[0][2]),
+                   elem_bits_to_float(conv_51_out[0][3]),
+                   elem_bits_to_float(conv_51_out[0][4]));
+        }
+
         // ====================== conv_52 ======================
         tiled_matmul_nn_auto(conv_52_params.I, conv_52_params.J, conv_52_params.K,
             conv_51_out, conv_52_w, conv_52_b, conv_52_out,
             RELU, conv_52_params.output_scale, true,
             tiled_matmul_type, check, "conv_52");
+        clamp_relu6((elem_t*)conv_52_out, conv_52_params.I, conv_52_params.J);
 
         // ====================== Global averaging ======================
         static elem_t average[1280][4] row_align(1);
@@ -1143,6 +1380,16 @@ int main (int argc, char * argv[]) {
                 if (v > fc_max) fc_max = v;
             }
             printf("  [DIAG] fc_53_out (img 0): min=%.4f, max=%.4f\n", fc_min, fc_max);
+            printf("  [DIAG] fc_53_out first5: [%.4f, %.4f, %.4f, %.4f, %.4f]\n",
+                   elem_bits_to_float(fc_53_out[0][0]),
+                   elem_bits_to_float(fc_53_out[1][0]),
+                   elem_bits_to_float(fc_53_out[2][0]),
+                   elem_bits_to_float(fc_53_out[3][0]),
+                   elem_bits_to_float(fc_53_out[4][0]));
+            printf("  [DIAG] fc_53_out[419]=%f, [885]=%f, [911]=%f\n",
+                   elem_bits_to_float(fc_53_out[419][0]),
+                   elem_bits_to_float(fc_53_out[885][0]),
+                   elem_bits_to_float(fc_53_out[911][0]));
         }
 
         // ====================== Top-K accuracy ======================

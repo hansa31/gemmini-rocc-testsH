@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
 """
-<<<<<<< HEAD
 Prepare ImageNet validation images for Gemmini MobileNetV2 inference.
-Matches the preprocessing pipeline from Imagenet2gemmini.ipynb exactly:
-  1. cv2.resize(img, (224, 224))  — simple stretch, NO center crop
-  2. BGR -> RGB via cv2.cvtColor
-  3. np.clip((img.astype(np.int32) - 128), -128, 127).astype(np.int8)
-=======
-Prepare ImageNet validation images for Gemmini ResNet-50 inference.
-Uses the standard ImageNet normalization pipeline matching the training pipeline:
-  1. cv2.resize(img, (224, 224))  — simple stretch, NO center crop
-  2. BGR -> RGB via cv2.cvtColor
-  3. x_float = (pixel/255 - mean) / std
-  4. x_int8 = clip(round(x_float / FMAX * 127), -128, 127)
+Matches the HuggingFace preprocessing pipeline for google/mobilenet_v2_1.0_224:
+  1. Resize shortest edge to 256 (preserving aspect ratio)
+  2. Center crop to 224x224
+  3. Convert BGR -> RGB
+  4. Quantize: np.clip((img.astype(np.int32) - 128), -128, 127).astype(np.int8)
 
-  ImageNet mean = [0.485, 0.456, 0.406]  (RGB)
-  ImageNet std  = [0.229, 0.224, 0.225]  (RGB)
-  FMAX = 2.75  (corresponds to x_scale_0 = FMAX/127 in the Gemmini C code)
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
+The C code then normalizes at runtime: pixel = (int8_value + 128) / 127.5 - 1.0
+This gives the same result as: (pixel_uint8 / 255 - 0.5) / 0.5
 
 Output format:
-  images.bin  — N images, each 224*224*3 int8 values (HWC, RGB), contiguous
-  labels.txt  — N lines, one integer label per line
+  images.bin  -- N images, each 224*224*3 int8 values (HWC, RGB), contiguous
+  labels.txt  -- N lines, one integer label per line
 
 Usage:
   python prepare_imagenet.py --imagenet-dir /path/to/ILSVRC2012_img_val \
@@ -44,63 +35,46 @@ import argparse
 import os
 import sys
 
-<<<<<<< HEAD
 import cv2
 import numpy as np
 
 
-# ---------- Preprocessing matching Imagenet2gemmini.ipynb exactly ----------
-=======
-import numpy as np
+# ---------- Preprocessing matching HuggingFace mobilenet_v2 exactly ----------
 
-# Standard ImageNet normalization constants
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float64)
-IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float64)
-FMAX = 2.75  # INT8 quantization range: x_scale_0 = FMAX/127
+def preprocess_image(img_path, input_size=224, resize_size=256):
+    """Load an image, resize+center-crop to 224x224, and quantize to int8.
 
-
-# ---------- Preprocessing: standard ImageNet normalization + INT8 quantization ----------
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
-
-def preprocess_image(img_path, input_size=224):
-    """Load an image, stretch-resize to 224x224, and quantize to int8.
-
-<<<<<<< HEAD
-    Pipeline (matches Imagenet2gemmini.ipynb):
+    Pipeline (matches HuggingFace google/mobilenet_v2_1.0_224 preprocessor):
       1. cv2.imread  (loads as BGR)
-      2. cv2.resize to (224, 224) — stretch, no crop, default INTER_LINEAR
-      3. cv2.cvtColor BGR -> RGB
-      4. np.clip((img.astype(np.int32) - 128), -128, 127).astype(np.int8)
+      2. Resize shortest edge to 256 (preserve aspect ratio)
+      3. Center crop to 224x224
+      4. cv2.cvtColor BGR -> RGB
+      5. np.clip((img.astype(np.int32) - 128), -128, 127).astype(np.int8)
     """
-=======
-    Pipeline (matches training normalization):
-      1. cv2.imread  (loads as BGR)
-      2. cv2.resize to (224, 224) — stretch, no crop, default INTER_LINEAR
-      3. cv2.cvtColor BGR -> RGB
-      4. x_float = (pixel/255 - IMAGENET_MEAN) / IMAGENET_STD
-      5. x_int8 = clip(round(x_float / FMAX * 127), -128, 127)
-
-    The corresponding x_scale_0 in the Gemmini extraction script is FMAX/127.
-    """
-    import cv2
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     img = cv2.imread(img_path)
     if img is None:
         raise ValueError(f"Failed to load image: {img_path}")
-    img = cv2.resize(img, (input_size, input_size))
+
+    # Resize shortest edge to resize_size, preserving aspect ratio
+    h, w = img.shape[:2]
+    if h < w:
+        new_h = resize_size
+        new_w = int(w * resize_size / h)
+    else:
+        new_w = resize_size
+        new_h = int(h * resize_size / w)
+    img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    # Center crop to input_size x input_size
+    h, w = img.shape[:2]
+    top = (h - input_size) // 2
+    left = (w - input_size) // 2
+    img = img[top:top + input_size, left:left + input_size]
+
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-<<<<<<< HEAD
     # Quantize: uint8 - 128 -> int8
     quantized = np.clip(img.astype(np.int32) - 128, -128, 127).astype(np.int8)
-=======
-    # Normalize: (pixel/255 - mean) / std
-    img_f    = img.astype(np.float64) / 255.0
-    img_norm = (img_f - IMAGENET_MEAN) / IMAGENET_STD
-
-    # Quantize to INT8 with FMAX scale
-    quantized = np.clip(np.round(img_norm / FMAX * 127), -128, 127).astype(np.int8)
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 
     return quantized  # shape (224, 224, 3), dtype int8
 
@@ -109,8 +83,8 @@ def parse_labels_file(labels_path, labels_format="imagenet"):
     """Parse a labels file.
 
     labels_format:
-      "imagenet" — lines like "ILSVRC2012_val_00000001.JPEG 65"
-      "plain"    — lines with just an integer label
+      "imagenet" -- lines like "ILSVRC2012_val_00000001.JPEG 65"
+      "plain"    -- lines with just an integer label
     """
     filenames = []
     labels = []
@@ -141,15 +115,8 @@ def visualize_preprocessed(image_paths, imagenet_dir, num_vis=5):
     for i in range(n):
         img_path = os.path.join(imagenet_dir, image_paths[i])
         quantized = preprocess_image(img_path)
-<<<<<<< HEAD
         # Dequantize: int8 + 128 -> uint8 for display
         display = np.clip(quantized.astype(np.int32) + 128, 0, 255).astype(np.uint8)
-=======
-        # Dequantize: int8 * FMAX/127 * std + mean -> float -> uint8
-        x_f = quantized.astype(np.float64) * (FMAX / 127.0)
-        x_f = x_f * IMAGENET_STD + IMAGENET_MEAN
-        display = np.clip(np.round(x_f * 255), 0, 255).astype(np.uint8)
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         axes[i].imshow(display)
         axes[i].set_title(image_paths[i], fontsize=8)
         axes[i].axis("off")

@@ -22,9 +22,9 @@
 #include "include/gemmini_float_convert.h"
 
 #ifndef BAREMETAL
-#define MAT_DIM_I 64
-#define MAT_DIM_K 64
-#define MAT_DIM_J 64
+#define MAT_DIM_I 512
+#define MAT_DIM_K 512
+#define MAT_DIM_J 512
 #else
 #define MAT_DIM_I 16
 #define MAT_DIM_K 16

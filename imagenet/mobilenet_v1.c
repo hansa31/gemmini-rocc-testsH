@@ -20,21 +20,12 @@
 #define TOP_K 10
 
 // ---- Configuration: change these for your dataset ----
-<<<<<<< HEAD
-#define NUM_IMAGES 50000
-#define BATCH_SIZE 4
-#define IMAGE_SIZE (224 * 224 * 3)
-
-#define IMAGES_BIN_FILE "imagenet_val_50000.bin"
-#define LABELS_TXT_FILE "imagenet_val_50000_labels.txt"
-=======
 #define NUM_IMAGES 500
 #define BATCH_SIZE 4
 #define IMAGE_SIZE (224 * 224 * 3)
 
 #define IMAGES_BIN_FILE "imagenet_val_10000.bin"
 #define LABELS_TXT_FILE "imagenet_val_10000_labels.txt"
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 // ------------------------------------------------------
 
 static inline uint64_t get_time_ns(void) {
@@ -43,10 +34,6 @@ static inline uint64_t get_time_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-<<<<<<< HEAD
-// Only one batch of images in memory at a time (~600 KB)
-static elem_t batch_images[BATCH_SIZE * IMAGE_SIZE];
-=======
 static inline uint64_t bench_read_cycles(void) {
     uint64_t c;
     asm volatile ("rdcycle %0" : "=r"(c));
@@ -84,7 +71,6 @@ static elem_t _pc_out_col[50176][1] row_align(1);  /* max I = 4*112*112     */
         }                                                                     \
     }                                                                         \
 } while(0)
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 
 int main (int argc, char * argv[]) {
 #ifndef BAREMETAL

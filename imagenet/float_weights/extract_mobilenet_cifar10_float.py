@@ -2,22 +2,22 @@
 """
 Extract FP32 weights from HuggingFace MobileNetV2 fine-tuned on CIFAR-10
 (jialicheng/cifar10_mobilenet-v2) and generate:
-  - ../mobilenet_cifar10_params_float.h  (FP32 weights, CIFAR-10 spatial dims)
-<<<<<<< HEAD
-  - ../cifar10_images.h                  (4 sample CIFAR-10 test images)
-
-The backbone (conv_1 through conv_52) uses the CIFAR-10 fine-tuned model's
-weights with BatchNorm folded into conv weights.  The FC layer outputs 10 classes.
-All spatial dimensions are recomputed for native 32x32 CIFAR-10 input:
-  32 -> 16 -> 8 -> 4 -> 2 -> 1  (five stride-2 reductions)
-=======
-  - ../cifar10_images.h                  (4 sample CIFAR-10 test images, resized to 224x224)
+  - ../mobilenet_cifar10_params_float.h  (FP32 weights with BN folded, float mode)
+  - ../cifar10_images_224.h              (4 sample CIFAR-10 test images, resized to 224x224)
 
 The backbone (conv_1 through conv_52) uses the CIFAR-10 fine-tuned model's
 weights with BatchNorm folded into conv weights.  The FC layer outputs 10 classes.
 All spatial dimensions are recomputed for 224x224 input (CIFAR-10 images resized):
   224 -> 112 -> 56 -> 28 -> 14 -> 7  (five stride-2 reductions)
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
+
+Key design decisions:
+  - BN folding uses eps=1e-5 (PyTorch default for this model).
+  - Dead BN channels (running_var < BN_DEAD_VAR_THRESHOLD) have their folded
+    weights and biases zeroed to prevent weight explosion from 1/sqrt(~0).
+  - Weights are stored as float C literals; the C code converts them to FP16
+    at runtime via float_to_elem_bits().
+  - Reference images are stored as FP16 bit-pattern uint16_t values with
+    proper [-1, 1] normalization (mean=0.5, std=0.5).
 
 Usage:
     pip install torch transformers torchvision numpy
@@ -25,19 +25,19 @@ Usage:
 """
 
 import os
+import struct
 import math
 import numpy as np
 import torch
 from transformers import MobileNetV2ForImageClassification
 
 MODEL_NAME = "jialicheng/cifar10_mobilenet-v2"
-<<<<<<< HEAD
-INPUT_DIM = 32
-=======
 INPUT_DIM = 224   # Model was fine-tuned from 224x224 ImageNet MobileNetV2
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 BATCH_SIZE = 4
 NUM_CLASSES = 10
+
+BN_EPS = 1e-3               # Actual MobileNetV2 BN epsilon (model uses eps=0.001)
+BN_DEAD_VAR_THRESHOLD = 1e-3  # Zero channels with running_var below this
 
 # ---------------------------------------------------------------------------
 # MobileNetV2 architecture definition (input-size independent)
@@ -45,58 +45,58 @@ NUM_CLASSES = 10
 # (name, kernel, in_ch, out_ch, stride, padding, depthwise, activation)
 # fmt: off
 LAYER_ARCH = [
-    ("conv_1",     3,   3,   32, 2, 1, False, "relu"),
-    ("conv_dw_2",  3,  32,   32, 1, 1,  True, "relu"),
+    ("conv_1",     3,   3,   32, 2, 1, False, "relu6"),
+    ("conv_dw_2",  3,  32,   32, 1, 1,  True, "relu6"),
     ("conv_3",     1,  32,   16, 1, 0, False, "none"),
-    ("conv_4",     1,  16,   96, 1, 0, False, "relu"),
-    ("conv_dw_5",  3,  96,   96, 2, 1,  True, "relu"),
+    ("conv_4",     1,  16,   96, 1, 0, False, "relu6"),
+    ("conv_dw_5",  3,  96,   96, 2, 1,  True, "relu6"),
     ("conv_6",     1,  96,   24, 1, 0, False, "none"),
-    ("conv_7",     1,  24,  144, 1, 0, False, "relu"),
-    ("conv_dw_8",  3, 144,  144, 1, 1,  True, "relu"),
+    ("conv_7",     1,  24,  144, 1, 0, False, "relu6"),
+    ("conv_dw_8",  3, 144,  144, 1, 1,  True, "relu6"),
     ("conv_9",     1, 144,   24, 1, 0, False, "none"),
-    ("conv_10",    1,  24,  144, 1, 0, False, "relu"),
-    ("conv_dw_11", 3, 144,  144, 2, 1,  True, "relu"),
+    ("conv_10",    1,  24,  144, 1, 0, False, "relu6"),
+    ("conv_dw_11", 3, 144,  144, 2, 1,  True, "relu6"),
     ("conv_12",    1, 144,   32, 1, 0, False, "none"),
-    ("conv_13",    1,  32,  192, 1, 0, False, "relu"),
-    ("conv_dw_14", 3, 192,  192, 1, 1,  True, "relu"),
+    ("conv_13",    1,  32,  192, 1, 0, False, "relu6"),
+    ("conv_dw_14", 3, 192,  192, 1, 1,  True, "relu6"),
     ("conv_15",    1, 192,   32, 1, 0, False, "none"),
-    ("conv_16",    1,  32,  192, 1, 0, False, "relu"),
-    ("conv_dw_17", 3, 192,  192, 1, 1,  True, "relu"),
+    ("conv_16",    1,  32,  192, 1, 0, False, "relu6"),
+    ("conv_dw_17", 3, 192,  192, 1, 1,  True, "relu6"),
     ("conv_18",    1, 192,   32, 1, 0, False, "none"),
-    ("conv_19",    1,  32,  192, 1, 0, False, "relu"),
-    ("conv_dw_20", 3, 192,  192, 2, 1,  True, "relu"),
+    ("conv_19",    1,  32,  192, 1, 0, False, "relu6"),
+    ("conv_dw_20", 3, 192,  192, 2, 1,  True, "relu6"),
     ("conv_21",    1, 192,   64, 1, 0, False, "none"),
-    ("conv_22",    1,  64,  384, 1, 0, False, "relu"),
-    ("conv_dw_23", 3, 384,  384, 1, 1,  True, "relu"),
+    ("conv_22",    1,  64,  384, 1, 0, False, "relu6"),
+    ("conv_dw_23", 3, 384,  384, 1, 1,  True, "relu6"),
     ("conv_24",    1, 384,   64, 1, 0, False, "none"),
-    ("conv_25",    1,  64,  384, 1, 0, False, "relu"),
-    ("conv_dw_26", 3, 384,  384, 1, 1,  True, "relu"),
+    ("conv_25",    1,  64,  384, 1, 0, False, "relu6"),
+    ("conv_dw_26", 3, 384,  384, 1, 1,  True, "relu6"),
     ("conv_27",    1, 384,   64, 1, 0, False, "none"),
-    ("conv_28",    1,  64,  384, 1, 0, False, "relu"),
-    ("conv_dw_29", 3, 384,  384, 1, 1,  True, "relu"),
+    ("conv_28",    1,  64,  384, 1, 0, False, "relu6"),
+    ("conv_dw_29", 3, 384,  384, 1, 1,  True, "relu6"),
     ("conv_30",    1, 384,   64, 1, 0, False, "none"),
-    ("conv_31",    1,  64,  384, 1, 0, False, "relu"),
-    ("conv_dw_32", 3, 384,  384, 1, 1,  True, "relu"),
+    ("conv_31",    1,  64,  384, 1, 0, False, "relu6"),
+    ("conv_dw_32", 3, 384,  384, 1, 1,  True, "relu6"),
     ("conv_33",    1, 384,   96, 1, 0, False, "none"),
-    ("conv_34",    1,  96,  576, 1, 0, False, "relu"),
-    ("conv_dw_35", 3, 576,  576, 1, 1,  True, "relu"),
+    ("conv_34",    1,  96,  576, 1, 0, False, "relu6"),
+    ("conv_dw_35", 3, 576,  576, 1, 1,  True, "relu6"),
     ("conv_36",    1, 576,   96, 1, 0, False, "none"),
-    ("conv_37",    1,  96,  576, 1, 0, False, "relu"),
-    ("conv_dw_38", 3, 576,  576, 1, 1,  True, "relu"),
+    ("conv_37",    1,  96,  576, 1, 0, False, "relu6"),
+    ("conv_dw_38", 3, 576,  576, 1, 1,  True, "relu6"),
     ("conv_39",    1, 576,   96, 1, 0, False, "none"),
-    ("conv_40",    1,  96,  576, 1, 0, False, "relu"),
-    ("conv_dw_41", 3, 576,  576, 2, 1,  True, "relu"),
+    ("conv_40",    1,  96,  576, 1, 0, False, "relu6"),
+    ("conv_dw_41", 3, 576,  576, 2, 1,  True, "relu6"),
     ("conv_42",    1, 576,  160, 1, 0, False, "none"),
-    ("conv_43",    1, 160,  960, 1, 0, False, "relu"),
-    ("conv_dw_44", 3, 960,  960, 1, 1,  True, "relu"),
+    ("conv_43",    1, 160,  960, 1, 0, False, "relu6"),
+    ("conv_dw_44", 3, 960,  960, 1, 1,  True, "relu6"),
     ("conv_45",    1, 960,  160, 1, 0, False, "none"),
-    ("conv_46",    1, 160,  960, 1, 0, False, "relu"),
-    ("conv_dw_47", 3, 960,  960, 1, 1,  True, "relu"),
+    ("conv_46",    1, 160,  960, 1, 0, False, "relu6"),
+    ("conv_dw_47", 3, 960,  960, 1, 1,  True, "relu6"),
     ("conv_48",    1, 960,  160, 1, 0, False, "none"),
-    ("conv_49",    1, 160,  960, 1, 0, False, "relu"),
-    ("conv_dw_50", 3, 960,  960, 1, 1,  True, "relu"),
+    ("conv_49",    1, 160,  960, 1, 0, False, "relu6"),
+    ("conv_dw_50", 3, 960,  960, 1, 1,  True, "relu6"),
     ("conv_51",    1, 960,  320, 1, 0, False, "none"),
-    ("conv_52",    1, 320, 1280, 1, 0, False, "relu"),
+    ("conv_52",    1, 320, 1280, 1, 0, False, "relu6"),
 ]
 # fmt: on
 
@@ -114,11 +114,11 @@ FC_PARAMS = {
 
 
 # ---------------------------------------------------------------------------
-# Compute CIFAR-10 spatial dimensions
+# Compute spatial dimensions for 224x224 input
 # ---------------------------------------------------------------------------
 
 def compute_conv_params():
-    """Compute per-layer ConvParams for 32x32 CIFAR-10 input."""
+    """Compute per-layer ConvParams for given INPUT_DIM."""
     params = {}
     current_dim = INPUT_DIM
     for name, kernel, in_ch, out_ch, stride, padding, dw, _act in LAYER_ARCH:
@@ -158,27 +158,19 @@ def compute_buffers(conv_params):
 
 
 # ---------------------------------------------------------------------------
-# HuggingFace-to-Gemmini layer mapping (identical to ImageNet version)
+# HuggingFace-to-Gemmini layer mapping
 # ---------------------------------------------------------------------------
 
 def build_layer_mapping():
     mapping = []
-<<<<<<< HEAD
-    mapping.append(("conv_1", "mobilenet_v2.conv_stem", "conv"))
-    mapping.append(("conv_dw_2", "mobilenet_v2.layer.0.conv_3x3", "dw"))
-    mapping.append(("conv_3", "mobilenet_v2.layer.0.reduce_1x1", "conv"))
-    gemmini_idx = 4
-    for hf_layer_idx in range(1, 17):
-=======
-    # 1) Initial conv stem — 3 sub-layers inside mobilenet_v2.conv_stem
+    # Initial conv stem — 3 sub-layers inside mobilenet_v2.conv_stem
     mapping.append(("conv_1",    "mobilenet_v2.conv_stem.first_conv", "conv"))
     mapping.append(("conv_dw_2", "mobilenet_v2.conv_stem.conv_3x3",   "dw"))
     mapping.append(("conv_3",    "mobilenet_v2.conv_stem.reduce_1x1", "conv"))
-    # 2) Inverted residual blocks
-    # layer.0..15 → gemmini conv_4..conv_51 (each block: expand + dw + project)
+    # Inverted residual blocks
+    # layer.0..15 -> gemmini conv_4..conv_51 (each block: expand + dw + project)
     gemmini_idx = 4
     for hf_layer_idx in range(0, 16):
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         prefix = f"mobilenet_v2.layer.{hf_layer_idx}"
         mapping.append((f"conv_{gemmini_idx}", f"{prefix}.expand_1x1", "conv"))
         gemmini_idx += 1
@@ -192,16 +184,26 @@ def build_layer_mapping():
 
 
 # ---------------------------------------------------------------------------
-# BatchNorm folding
+# BatchNorm folding with dead-channel zeroing
 # ---------------------------------------------------------------------------
 
-def fold_bn(conv_weight, bn_weight, bn_bias, bn_mean, bn_var, eps=1e-5):
+def fold_bn(conv_weight, bn_weight, bn_bias, bn_mean, bn_var,
+            eps=BN_EPS, dead_threshold=BN_DEAD_VAR_THRESHOLD):
+    """Fold BN into conv weights. Zero dead channels (var < threshold)."""
     inv_std = 1.0 / np.sqrt(bn_var + eps)
     scale = bn_weight * inv_std
     shape = [conv_weight.shape[0]] + [1] * (conv_weight.ndim - 1)
     w_folded = conv_weight * scale.reshape(shape)
     b_folded = bn_bias - bn_weight * bn_mean * inv_std
-    return w_folded, b_folded
+
+    # Zero dead channels
+    dead_mask = bn_var < dead_threshold
+    n_dead = int(np.sum(dead_mask))
+    if n_dead > 0:
+        w_folded[dead_mask] = 0.0
+        b_folded[dead_mask] = 0.0
+
+    return w_folded, b_folded, n_dead
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +238,45 @@ def fmt_3d(arr):
 
 
 # ---------------------------------------------------------------------------
+# FP16 conversion helpers (matching gemmini_float_convert.h)
+# ---------------------------------------------------------------------------
+
+def float_to_fp16_bits(val):
+    """Convert a Python float to a FP16 bit pattern (uint16), matching
+    the float_to_fp16_bits() in gemmini_float_convert.h (truncation, no rounding)."""
+    # Get FP32 bit pattern
+    fp32_bits = struct.unpack('<I', struct.pack('<f', float(val)))[0]
+    sign = (fp32_bits >> 31) & 1
+    exp32 = (fp32_bits >> 23) & 0xFF
+    mant32 = fp32_bits & 0x7FFFFF
+
+    if exp32 == 0xFF:
+        # Inf or NaN
+        if mant32 != 0:
+            return (sign << 15) | 0x7C01  # quiet NaN
+        return (sign << 15) | 0x7C00  # Inf
+
+    # Unbias from FP32 (bias=127), rebias to FP16 (bias=15)
+    unbiased_exp = exp32 - 127
+    fp16_exp = unbiased_exp + 15
+
+    if exp32 == 0:
+        # FP32 zero/subnormal -> FP16 zero
+        return sign << 15
+
+    if fp16_exp >= 31:
+        # Overflow -> Inf
+        return (sign << 15) | 0x7C00
+    if fp16_exp <= 0:
+        # Underflow -> zero (flush)
+        return sign << 15
+
+    # Truncate mantissa from 23 bits to 10 bits
+    mant16 = mant32 >> 13
+    return (sign << 15) | (fp16_exp << 10) | mant16
+
+
+# ---------------------------------------------------------------------------
 # Layer extraction
 # ---------------------------------------------------------------------------
 
@@ -250,22 +291,21 @@ def get_conv_bn_params(state_dict, prefix):
 
 def extract_layer(state_dict, gemmini_name, hf_prefix, layer_type):
     if layer_type == "fc":
-<<<<<<< HEAD
-        fc_w = state_dict["classifier.1.weight"].numpy()   # [10, 1280]
-        fc_b = state_dict["classifier.1.bias"].numpy()      # [10]
-=======
         fc_w = state_dict["classifier.weight"].numpy()   # [10, 1280]
         fc_b = state_dict["classifier.bias"].numpy()      # [10]
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         bias_2d = np.tile(fc_b.reshape(-1, 1), (1, BATCH_SIZE))
-        return fc_w, bias_2d
+        return fc_w, bias_2d, 0
 
     conv_w, bn_gamma, bn_beta, bn_mean, bn_var = get_conv_bn_params(state_dict, hf_prefix)
-    w_folded, b_folded = fold_bn(conv_w, bn_gamma, bn_beta, bn_mean, bn_var)
+    w_folded, b_folded, n_dead = fold_bn(conv_w, bn_gamma, bn_beta, bn_mean, bn_var)
+
+    if n_dead > 0:
+        print(f"    ** {gemmini_name}: zeroed {n_dead} dead BN channels "
+              f"(var < {BN_DEAD_VAR_THRESHOLD})")
 
     if layer_type == "dw":
-        return reshape_dw_weight(w_folded), b_folded
-    return reshape_conv_weight(w_folded), b_folded
+        return reshape_dw_weight(w_folded), b_folded, n_dead
+    return reshape_conv_weight(w_folded), b_folded, n_dead
 
 
 def validate_shapes(gemmini_name, weight, bias, layer_type, conv_params):
@@ -288,14 +328,15 @@ def validate_shapes(gemmini_name, weight, bias, layer_type, conv_params):
 
 
 # ---------------------------------------------------------------------------
-# Header file generation
+# Header file generation (float weights stored as _w_float[], converted at runtime)
 # ---------------------------------------------------------------------------
 
 def write_header(output_path, layers_data, conv_params, buffers):
     with open(output_path, "w") as f:
         f.write("#ifndef MOBILENET_CIFAR10_FLOAT_PARAMETERS_H\n")
         f.write("#define MOBILENET_CIFAR10_FLOAT_PARAMETERS_H\n\n")
-        f.write("#include <include/gemmini_params.h>\n")
+        f.write('#include <include/gemmini_params.h>\n')
+        f.write('#include "include/gemmini_float_convert.h"\n')
         f.write("#include <stdbool.h>\n\n")
 
         for gemmini_name, weight, bias, layer_type in layers_data:
@@ -307,20 +348,31 @@ def write_header(output_path, layers_data, conv_params, buffers):
                 write_conv_layer(f, gemmini_name, weight, bias, conv_params, buffers)
             f.write("\n\n")
 
-        f.write("#endif // MOBILENET_CIFAR10_FLOAT_PARAMETERS_H\n")
+        # Write convert_all_weights() function
+        write_convert_function(f, layers_data)
+
+        f.write("\n#endif // MOBILENET_CIFAR10_FLOAT_PARAMETERS_H\n")
 
 
 def write_conv_layer(f, name, weight, bias, conv_params, buffers):
     p = conv_params[name]
-    f.write(f"static const elem_t {name}_w[{p['patch_size']}][{p['out_channels']}] row_align(1) = ")
+    ps = p['patch_size']
+    oc = p['out_channels']
+    # Float source weights
+    f.write(f"static const float {name}_w_float[{ps}][{oc}] = ")
     f.write(fmt_2d(weight))
     f.write(";\n")
-    f.write(f"static const acc_t {name}_b[{p['out_channels']}] row_align_acc(1) = ")
+    # Runtime-converted elem_t weights
+    f.write(f"static elem_t {name}_w[{ps}][{oc}] row_align(1);\n")
+    # Bias (acc_t = float, no conversion needed)
+    f.write(f"static const acc_t {name}_b[{oc}] row_align_acc(1) = ")
     f.write(fmt_1d(bias))
     f.write(";\n")
+    # Buffers
     for buf in buffers:
         if buf[0].startswith(name + "_"):
             f.write(f"static elem_t {buf[0]}[{buf[1]}][{buf[2]}] row_align(1);\n")
+    # ConvParams struct
     f.write(f"static const struct ConvParams {name}_params = {{")
     f.write(f".batch_size={p['batch_size']}, ")
     f.write(f".in_row_dim={p['in_row_dim']}, .in_col_dim={p['in_col_dim']}, ")
@@ -340,15 +392,22 @@ def write_conv_layer(f, name, weight, bias, conv_params, buffers):
 
 def write_dw_layer(f, name, weight, bias, conv_params, buffers):
     p = conv_params[name]
-    f.write(f"static const elem_t {name}_w[{p['out_channels']}][3][3] row_align(1) = ")
+    oc = p['out_channels']
+    # Float source weights
+    f.write(f"static const float {name}_w_float[{oc}][3][3] = ")
     f.write(fmt_3d(weight))
     f.write(";\n")
-    f.write(f"static const acc_t {name}_b[{p['out_channels']}] row_align_acc(1) = ")
+    # Runtime-converted elem_t weights
+    f.write(f"static elem_t {name}_w[{oc}][3][3] row_align(1);\n")
+    # Bias
+    f.write(f"static const acc_t {name}_b[{oc}] row_align_acc(1) = ")
     f.write(fmt_1d(bias))
     f.write(";\n")
+    # Output buffer
     for buf in buffers:
         if buf[0] == f"{name}_out":
             f.write(f"static elem_t {buf[0]}[{buf[1]}][{buf[2]}] row_align(1);\n")
+    # ConvParams struct
     f.write(f"static const struct ConvParams {name}_params = {{")
     f.write(f".batch_size={p['batch_size']}, ")
     f.write(f".in_row_dim={p['in_row_dim']}, .in_col_dim={p['in_col_dim']}, ")
@@ -370,9 +429,13 @@ def write_fc_layer(f, name, weight, bias):
     p = FC_PARAMS[name]
     out_f = p["out_features"]
     in_f = p["in_features"]
-    f.write(f"static const elem_t {name}_w[{out_f}][{in_f}] row_align(1) = ")
+    # Float source weights
+    f.write(f"static const float {name}_w_float[{out_f}][{in_f}] = ")
     f.write(fmt_2d(weight))
     f.write(";\n")
+    # Runtime-converted elem_t weights
+    f.write(f"static elem_t {name}_w[{out_f}][{in_f}] row_align(1);\n")
+    # Bias (acc_t = float)
     f.write(f"static const acc_t {name}_b[{out_f}][{BATCH_SIZE}] row_align_acc(1) = ")
     f.write(fmt_2d(bias))
     f.write(";\n")
@@ -386,61 +449,90 @@ def write_fc_layer(f, name, weight, bias):
     f.write("};\n")
 
 
+def write_convert_function(f, layers_data):
+    """Write a convert_all_weights() function that converts float -> elem_t at runtime."""
+    f.write("\n\nstatic void convert_all_weights() {\n")
+    for gemmini_name, weight, bias, layer_type in layers_data:
+        if layer_type == "fc":
+            p = FC_PARAMS[gemmini_name]
+            d0 = p["out_features"]
+            d1 = p["in_features"]
+            f.write(f"  for (int i = 0; i < {d0}; i++)\n")
+            f.write(f"    for (int j = 0; j < {d1}; j++)\n")
+            f.write(f"      {gemmini_name}_w[i][j] = float_to_elem_bits({gemmini_name}_w_float[i][j]);\n")
+        elif layer_type == "dw":
+            oc = weight.shape[0]
+            f.write(f"  for (int i = 0; i < {oc}; i++)\n")
+            f.write(f"    for (int j = 0; j < 3; j++)\n")
+            f.write(f"      for (int k = 0; k < 3; k++)\n")
+            f.write(f"        {gemmini_name}_w[i][j][k] = float_to_elem_bits({gemmini_name}_w_float[i][j][k]);\n")
+        else:
+            d0 = weight.shape[0]
+            d1 = weight.shape[1]
+            f.write(f"  for (int i = 0; i < {d0}; i++)\n")
+            f.write(f"    for (int j = 0; j < {d1}; j++)\n")
+            f.write(f"      {gemmini_name}_w[i][j] = float_to_elem_bits({gemmini_name}_w_float[i][j]);\n")
+    f.write("}\n")
+
+
 # ---------------------------------------------------------------------------
-# CIFAR-10 image generation
+# CIFAR-10 image generation (FP16 bit-pattern format)
 # ---------------------------------------------------------------------------
 
 def generate_cifar10_images(output_path, indices=None):
-    """Generate cifar10_images.h with 4 sample CIFAR-10 test images."""
+    """Generate cifar10_images_224.h with 4 CIFAR-10 test images.
+
+    Images are normalized to [-1, 1] (mean=0.5, std=0.5) and stored as
+    FP16 bit-pattern uint16_t values, matching what the streaming path does:
+        float_to_elem_bits(pixel / 127.5 - 1.0)
+    """
     try:
         from torchvision.datasets import CIFAR10
     except ImportError:
-        print("WARNING: torchvision not installed — skipping image generation.")
+        print("WARNING: torchvision not installed -- skipping image generation.")
         print("  pip install torchvision")
         return None
 
     if indices is None:
         indices = [0, 1, 2, 3]
 
+    from PIL import Image as PILImage
     dataset = CIFAR10(root="/tmp/cifar10_data", train=False, download=True)
 
-<<<<<<< HEAD
-=======
-    from PIL import Image as PILImage
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
-    images = []
+    images_fp16 = []  # list of [H, W, 3] uint16 arrays
     labels = []
     for idx in indices:
         img_pil, label = dataset[idx]
-<<<<<<< HEAD
-        img_np = np.array(img_pil, dtype=np.int16)  # [32, 32, 3] uint8→int16
-        img_centered = np.clip(img_np - 128, -128, 127)  # center around 0
-=======
         if INPUT_DIM != 32:
             img_pil = img_pil.resize((INPUT_DIM, INPUT_DIM), PILImage.BILINEAR)
-        img_np = np.array(img_pil, dtype=np.int16)
-        img_centered = np.clip(img_np - 128, -128, 127)
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
-        images.append(img_centered)
+        img_np = np.array(img_pil, dtype=np.float32)  # [H, W, 3] uint8->float32
+
+        # Normalize to [-1, 1]: (pixel/255 - 0.5) / 0.5 = pixel/127.5 - 1.0
+        img_norm = img_np / 127.5 - 1.0
+
+        # Convert each value to FP16 bit pattern (uint16)
+        fp16_img = np.zeros_like(img_norm, dtype=np.uint16)
+        for r in range(INPUT_DIM):
+            for c in range(INPUT_DIM):
+                for ch in range(3):
+                    fp16_img[r, c, ch] = float_to_fp16_bits(img_norm[r, c, ch])
+
+        images_fp16.append(fp16_img)
         labels.append(label)
 
     with open(output_path, "w") as f:
-<<<<<<< HEAD
-        f.write("#ifndef CIFAR10_IMAGES_H\n")
-        f.write("#define CIFAR10_IMAGES_H\n\n")
-=======
         f.write("#ifndef CIFAR10_IMAGES_224_H\n")
         f.write("#define CIFAR10_IMAGES_224_H\n\n")
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
         f.write("#include <include/gemmini_params.h>\n\n")
-        f.write(f"// CIFAR-10 test images at indices {indices}\n")
         cifar10_classes = ["airplane","automobile","bird","cat","deer",
                            "dog","frog","horse","ship","truck"]
         label_names = [cifar10_classes[l] for l in labels]
+        f.write(f"// CIFAR-10 test images at indices {indices}\n")
         f.write(f"// Labels: {labels} ({label_names})\n")
-        f.write(f"// Use in C:  int correct[] = {{{', '.join(str(l) for l in labels)}}};\n\n")
+        f.write(f"// Use in C:  int correct[] = {{{', '.join(str(l) for l in labels)}}};\n")
+        f.write(f"// Normalization: (pixel/127.5 - 1.0) converted to FP16 bit patterns\n\n")
         f.write(f"static const elem_t images[{BATCH_SIZE}][{INPUT_DIM}][{INPUT_DIM}][3] row_align(1) = {{")
-        for b in range(len(images)):
+        for b in range(len(images_fp16)):
             if b > 0:
                 f.write(",")
             f.write("{")
@@ -451,16 +543,12 @@ def generate_cifar10_images(output_path, indices=None):
                 for c in range(INPUT_DIM):
                     if c > 0:
                         f.write(",")
-                    vals = ",".join(str(int(images[b][r][c][ch])) for ch in range(3))
+                    vals = ",".join(str(int(images_fp16[b][r][c][ch])) for ch in range(3))
                     f.write("{" + vals + "}")
                 f.write("}")
             f.write("}")
         f.write("};\n\n")
-<<<<<<< HEAD
-        f.write("#endif // CIFAR10_IMAGES_H\n")
-=======
         f.write("#endif // CIFAR10_IMAGES_224_H\n")
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
 
     print(f"  Written {output_path}")
     print(f"  Labels: {labels} ({label_names})")
@@ -478,11 +566,7 @@ def main():
     model.eval()
     state_dict = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
-<<<<<<< HEAD
-    classifier_w = state_dict["classifier.1.weight"]
-=======
     classifier_w = state_dict["classifier.weight"]
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     actual_classes = classifier_w.shape[0]
     print(f"Model has {actual_classes} output classes")
     assert actual_classes == NUM_CLASSES, \
@@ -492,7 +576,7 @@ def main():
     for k in sorted(state_dict.keys()):
         print(f"  {k}: {list(state_dict[k].shape)}")
 
-    # Compute CIFAR-10 spatial params
+    # Compute spatial params
     conv_params = compute_conv_params()
     buffers = compute_buffers(conv_params)
 
@@ -506,12 +590,17 @@ def main():
     # Extract all layers
     mapping = build_layer_mapping()
     layers_data = []
+    total_dead = 0
     print(f"\nExtracting {len(mapping)} layers...")
     for gemmini_name, hf_prefix, layer_type in mapping:
         print(f"  {gemmini_name:15s} <- {hf_prefix}")
-        weight, bias = extract_layer(state_dict, gemmini_name, hf_prefix, layer_type)
+        weight, bias, n_dead = extract_layer(state_dict, gemmini_name, hf_prefix, layer_type)
         validate_shapes(gemmini_name, weight, bias, layer_type, conv_params)
         layers_data.append((gemmini_name, weight, bias, layer_type))
+        total_dead += n_dead
+
+    if total_dead > 0:
+        print(f"\n  Total dead BN channels zeroed: {total_dead}")
 
     # Write params header
     output_dir = os.path.dirname(os.path.abspath(__file__))
@@ -521,11 +610,7 @@ def main():
     write_header(params_path, layers_data, conv_params, buffers)
 
     # Generate CIFAR-10 images
-<<<<<<< HEAD
-    images_path = os.path.join(output_dir, "..", "cifar10_images.h")
-=======
     images_path = os.path.join(output_dir, "..", "cifar10_images_224.h")
->>>>>>> c695654c3e05dc900b6ff449653601dced7f1499
     images_path = os.path.normpath(images_path)
     print(f"\nGenerating {images_path}...")
     labels = generate_cifar10_images(images_path)

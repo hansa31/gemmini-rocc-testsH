@@ -3,7 +3,7 @@
 # and wall time into mlp_bench_results.csv in the same directory as this script.
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-BIN_DIR="$DIR/mlps"
+BIN_DIR="/Test/mlps"
 CSV_FILE="$DIR/mlp_bench_results.csv"
 
 # Write header (overwrites any previous run)
